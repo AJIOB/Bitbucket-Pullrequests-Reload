@@ -10,6 +10,21 @@ import sys
 import requests
 from requests.auth import HTTPBasicAuth
 
+class PullRequest:
+    def __init__(self, id, user, title, state, body, srcCommit, dstCommit, srcBranch, dstBranch, declineReason, mergeCommit, closedBy):
+        self.id = id
+        self.user = user
+        self.title = title
+        self.state = state
+        self.body = body
+        self.srcCommit = srcCommit
+        self.dstCommit = dstCommit
+        self.srcBranch = srcBranch
+        self.dstBranch = dstBranch
+        self.declineReason = declineReason
+        self.mergeCommit = mergeCommit
+        self.closedBy = closedBy
+
 def init():
     # see https://stackoverflow.com/a/15063941/6818663
     csv.field_size_limit(sys.maxsize)
@@ -97,41 +112,51 @@ def create_pr(title, description = None, srcBranch = "prTest1", dstBranch = "sta
 
 def upload_prs(data):
     headers = data[0]
-    for idx, d in enumerate(data[1:]):
-        try:
-            number = d[headers.index('#')]
-            user = d[headers.index('User')]
-            title = d[headers.index('Title')]
-            state = d[headers.index('State')]
-            body = d[headers.index('BodyRaw')]
-            src = d[headers.index('SourceCommit')]
-            dst = d[headers.index('DestinationCommit')]
-            srcBranch = d[headers.index('SourceBranch')]
-            dstBranch = d[headers.index('DestinationBranch')]
-            declineReason = d[headers.index('DeclineReason')]
-            mergeCommit = d[headers.index('MergeCommit')]
-            closedBy = d[headers.index('ClosedBy')]
 
-            newTitle = f"[Bitbucket Import {number}, {state}] {title}"
+    prs = []
+
+    # Parse data
+    for d in data[1:]:
+        number = d[headers.index('#')]
+        user = d[headers.index('User')]
+        title = d[headers.index('Title')]
+        state = d[headers.index('State')]
+        body = d[headers.index('BodyRaw')]
+        src = d[headers.index('SourceCommit')]
+        dst = d[headers.index('DestinationCommit')]
+        srcBranch = d[headers.index('SourceBranch')]
+        dstBranch = d[headers.index('DestinationBranch')]
+        declineReason = d[headers.index('DeclineReason')]
+        mergeCommit = d[headers.index('MergeCommit')]
+        closedBy = d[headers.index('ClosedBy')]
+
+        pr = PullRequest(number, user, title, state, body, src, dst, srcBranch, dstBranch, declineReason, mergeCommit, closedBy)
+        prs.append(pr)
+
+    # Create pull requests
+    for idx, pr in enumerate(prs):
+        try:
+            newTitle = f"[Bitbucket Import {pr.id}, {pr.state}] {pr.title}"
             descriptionParts = [
-                f"_Created by {user}_",
-                f"_Closed by {closedBy}_",
-                f"Source commit (from) {src} (branch '{srcBranch}')",
-                f"Destination commit (to) {dst} (branch '{dstBranch}')",
+                f"_Created by {pr.user}_",
+                f"_Closed by {pr.closedBy}_",
+                f"",
+                f"Source commit (from) {pr.srcCommit} (branch *{srcBranch}*)",
+                f"Destination commit (to) {pr.dstCommit} (branch *{dstBranch}*)",
                 f"",
             ]
 
-            if declineReason != '':
+            if pr.declineReason != '':
                 descriptionParts.append("Decline message:")
-                descriptionParts.append(declineReason)
+                descriptionParts.append(pr.declineReason)
                 descriptionParts.append('')
 
-            if mergeCommit != '':
-                descriptionParts.append(f"Merged to commit {mergeCommit}")
+            if pr.mergeCommit != '':
+                descriptionParts.append(f"Merged to commit {pr.mergeCommit}")
                 descriptionParts.append('')
 
             descriptionParts.append("Original description:")
-            descriptionParts.append(body)
+            descriptionParts.append(pr.body)
 
             newDescription = '\n'.join(descriptionParts)
 
