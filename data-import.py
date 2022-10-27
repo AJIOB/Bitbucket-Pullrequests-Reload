@@ -44,6 +44,22 @@ class PullRequest:
         self.mergeCommit = mergeCommit
         self.closedBy = closedBy
 
+class PRComment:
+    def __init__(self, repo, prNumber, user, currType, currId, body, isDeleted, toLine, fromLine, file, diffUrl, parentComment, commit):
+        self.repo = repo
+        self.prNumber = prNumber
+        self.user = user
+        self.currType = currType
+        self.currId = currId
+        self.body = body
+        self.isDeleted = isDeleted
+        self.toLine = toLine
+        self.fromLine = fromLine
+        self.file = file
+        self.diffUrl = diffUrl
+        self.parentComment = parentComment
+        self.commit = commit
+
 def init():
     # see https://stackoverflow.com/a/15063941/6818663
     csv.field_size_limit(sys.maxsize)
@@ -321,6 +337,34 @@ def upload_prs(data):
             print()
 
 def upload_pr_comments(data):
+    headers = data[0]
+
+    comments = {}
+
+    # Parse data
+    for d in data[1:]:
+        repo = d[headers.index('Repository')]
+        prNumber = d[headers.index('PRNumber')]
+        user = d[headers.index('User')]
+        currType = d[headers.index('CommentType')]
+        currId = d[headers.index('CommentID')]
+        body = d[headers.index('BodyRaw')]
+        isDeleted = d[headers.index('IsDeleted')]
+        toLine = d[headers.index('ToLine')]
+        fromLine = d[headers.index('FromLine')]
+        file = d[headers.index('FilePath')]
+        diffUrl = d[headers.index('Diff')]
+        parentComment = d[headers.index('ParentID')]
+        commit = d[headers.index('CommitHash')]
+
+        if repo != REPO:
+            # Block creating another PRs
+            continue
+
+        comment = PRComment(repo, prNumber, user, currType, currId, body, isDeleted, toLine, fromLine, file, diffUrl, parentComment, commit)
+        comments[currId] = comment
+
+    # TODO: implement
     pass
 
 def delete_all_branches(filterText=None):
@@ -394,6 +438,8 @@ def main():
     data = read_file(SRC_FILE)
     if len(data) == 0:
         print("Data was empty")
+    elif len(data[0]) == 0:
+        print("Data header was empty")
     elif data[0][-1] == 'ClosedBy':
         print("PRs were found. Uploading them")
         upload_prs(data)
