@@ -10,6 +10,9 @@ import sys
 import requests
 from requests.auth import HTTPBasicAuth
 
+SRC_BRANCH_PREFIX = 'src'
+DST_BRANCH_PREFIX = 'dst'
+
 class PullRequest:
     def __init__(self, id, user, title, state, body, srcCommit, dstCommit, srcBranch, dstBranch, declineReason, mergeCommit, closedBy):
         self.id = id
@@ -38,6 +41,12 @@ def init():
 
     global URL_CLOSE_PR
     URL_CLOSE_PR = "{endpoint}projects/{projectKey}/repos/{repositorySlug}/pull-requests/{pullRequestId}/decline"
+
+    global URL_CREATE_BRANCH
+    URL_CREATE_BRANCH = "{endpoint}projects/{projectKey}/repos/{repositorySlug}/branches"
+
+    global URL_GET_COMMIT
+    URL_GET_COMMIT = "{endpoint}projects/{projectKey}/repos/{repositorySlug}/commits/{commitId}"
 
     # From https://confluence.atlassian.com/cloudkb/xsrf-check-failed-when-calling-cloud-apis-826874382.html
     global POST_HEADERS
@@ -86,8 +95,14 @@ def read_file(path):
 
     return rows
 
-def formatTemplate(template, prId=None):
-    return template.format(endpoint=SERVER_API_ENDPOINT, projectKey=PROJECT, repositorySlug=REPO, pullRequestId=prId)
+def formatTemplate(template, prId=None, commitId=None):
+    return template.format(endpoint=SERVER_API_ENDPOINT, projectKey=PROJECT, repositorySlug=REPO, pullRequestId=prId, commitId=commitId)
+
+def formatBranchName(id, prefix, originalName):
+    res = f'bitbucket/{id}/{prefix}/{originalName}'
+
+    # we have limit of 111 chars
+    return res[:111]
 
 def create_pr(title, description = None, srcBranch = "prTest1", dstBranch = "stage"):
     payload = {
@@ -105,10 +120,23 @@ def create_pr(title, description = None, srcBranch = "prTest1", dstBranch = "sta
 
     res = requests.post(formatTemplate(URL_CREATE_PR), auth=AUTH, headers=POST_HEADERS, json=payload)
     res.raise_for_status()
-    resText = res.text
+    return res.text
 
-    print(res)
-    print(resText)
+def get_commit_info(commitToRead):
+    res = requests.get(formatTemplate(URL_GET_COMMIT, commitId = commitToRead), auth=AUTH)
+    res.raise_for_status()
+
+    return res.text
+
+def create_branch(name, commit):
+    payload = {
+        "name": name,
+        "startPoint": commit,
+    }
+
+    res = requests.post(formatTemplate(URL_CREATE_BRANCH), auth=AUTH, headers=POST_HEADERS, json=payload)
+    res.raise_for_status()
+    return res.text
 
 def upload_prs(data):
     headers = data[0]
@@ -117,6 +145,7 @@ def upload_prs(data):
 
     # Parse data
     for d in data[1:]:
+        repo = d[headers.index('Repository')]
         number = d[headers.index('#')]
         user = d[headers.index('User')]
         title = d[headers.index('Title')]
@@ -130,11 +159,43 @@ def upload_prs(data):
         mergeCommit = d[headers.index('MergeCommit')]
         closedBy = d[headers.index('ClosedBy')]
 
+        if repo != REPO:
+            # Block creating another PRs
+            continue
+
         pr = PullRequest(number, user, title, state, body, src, dst, srcBranch, dstBranch, declineReason, mergeCommit, closedBy)
         prs.append(pr)
 
+    # Create branches
+    for pr in prs:
+        try:
+            srcCommit = pr.srcCommit
+            try:
+                get_commit_info(srcCommit)
+            except requests.exceptions.HTTPError as e:
+                # Commit not found, using merge commit
+                srcCommit = pr.mergeCommit
+
+            try:
+                get_commit_info(srcCommit)
+            except requests.exceptions.HTTPError as e:
+                # Commit not found, using none commit (next code will generate lots of exceptions)
+                srcCommit = None
+
+            create_branch(formatBranchName(pr.id, SRC_BRANCH_PREFIX, pr.srcBranch), srcCommit)
+            create_branch(formatBranchName(pr.id, DST_BRANCH_PREFIX, pr.dstBranch), pr.dstCommit)
+        except requests.exceptions.HTTPError as e:
+            print(f"HTTP Exception was caught for PR {pr.id} branch creation")
+            print(f"HTTP code {e.response.status_code}")
+            print(e.response.text)
+            print()
+        except Exception as e:
+            print(f"Exception was caught for PR {pr.id} branch creation")
+            print(e)
+            print()
+
     # Create pull requests
-    for idx, pr in enumerate(prs):
+    for pr in prs:
         try:
             newTitle = f"[Bitbucket Import {pr.id}, {pr.state}] {pr.title}"
             descriptionParts = [
@@ -160,14 +221,14 @@ def upload_prs(data):
 
             newDescription = '\n'.join(descriptionParts)
 
-            create_pr(newTitle, newDescription)
+            create_pr(newTitle, newDescription, formatBranchName(pr.id, SRC_BRANCH_PREFIX, pr.srcBranch), formatBranchName(pr.id, DST_BRANCH_PREFIX, pr.dstBranch))
         except requests.exceptions.HTTPError as e:
-            print(f"HTTP Exception was caught for data row {idx}")
+            print(f"HTTP Exception was caught for PR {pr.id} PR creation")
             print(f"HTTP code {e.response.status_code}")
             print(e.response.text)
             print()
         except Exception as e:
-            print(f"Exception was caught for data row {idx}")
+            print(f"Exception was caught for PR {pr.id} PR creation")
             print(e)
             print()
 
