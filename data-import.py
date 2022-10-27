@@ -74,10 +74,77 @@ def read_file(path):
 def formatTemplate(template, prId=None):
     return template.format(endpoint=SERVER_API_ENDPOINT, projectKey=PROJECT, repositorySlug=REPO, pullRequestId=prId)
 
-def upload_prs(data):
-    res = requests.post(formatTemplate(URL_CREATE_PR), auth=AUTH, headers=POST_HEADERS)
+def create_pr(title, description = None, srcBranch = "prTest1", dstBranch = "stage"):
+    payload = {
+        "title": title,
+        "description": description,
+        "fromRef": {
+            "id": srcBranch,
+        },
+        "toRef": {
+            "id": dstBranch,
+        },
+        "reviewers": [
+        ]
+    }
+
+    res = requests.post(formatTemplate(URL_CREATE_PR), auth=AUTH, headers=POST_HEADERS, json=payload)
+    res.raise_for_status()
+    resText = res.text
+
     print(res)
-    print(res.text)
+    print(resText)
+
+def upload_prs(data):
+    headers = data[0]
+    for idx, d in enumerate(data[1:]):
+        try:
+            number = d[headers.index('#')]
+            user = d[headers.index('User')]
+            title = d[headers.index('Title')]
+            state = d[headers.index('State')]
+            body = d[headers.index('BodyRaw')]
+            src = d[headers.index('SourceCommit')]
+            dst = d[headers.index('DestinationCommit')]
+            srcBranch = d[headers.index('SourceBranch')]
+            dstBranch = d[headers.index('DestinationBranch')]
+            declineReason = d[headers.index('DeclineReason')]
+            mergeCommit = d[headers.index('MergeCommit')]
+            closedBy = d[headers.index('ClosedBy')]
+
+            newTitle = f"[Bitbucket Import {number}, {state}] {title}"
+            descriptionParts = [
+                f"_Created by {user}_",
+                f"_Closed by {closedBy}_",
+                f"Source commit (from) {src} (branch '{srcBranch}')",
+                f"Destination commit (to) {dst} (branch '{dstBranch}')",
+                f"",
+            ]
+
+            if declineReason != '':
+                descriptionParts.append("Decline message:")
+                descriptionParts.append(declineReason)
+                descriptionParts.append('')
+
+            if mergeCommit != '':
+                descriptionParts.append(f"Merged to commit {mergeCommit}")
+                descriptionParts.append('')
+
+            descriptionParts.append("Original description:")
+            descriptionParts.append(body)
+
+            newDescription = '\n'.join(descriptionParts)
+
+            create_pr(newTitle, newDescription)
+        except requests.exceptions.HTTPError as e:
+            print(f"HTTP Exception was caught for data row {idx}")
+            print(f"HTTP code {e.response.status_code}")
+            print(e.response.text)
+            print()
+        except Exception as e:
+            print(f"Exception was caught for data row {idx}")
+            print(e)
+            print()
 
 def upload_pr_comments(data):
     pass
