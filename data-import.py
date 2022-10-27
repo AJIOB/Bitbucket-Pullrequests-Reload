@@ -12,9 +12,9 @@
 import csv
 from enum import Enum
 import json
-import sys
 import requests
 from requests.auth import HTTPBasicAuth
+import sys
 
 SRC_BRANCH_PREFIX = 'src'
 DST_BRANCH_PREFIX = 'dst'
@@ -121,7 +121,6 @@ def read_file(path):
     rows = []
     with open(path) as src:
         inReader = csv.reader(src)
-
 
         for row in inReader:
             rows.append(row)
