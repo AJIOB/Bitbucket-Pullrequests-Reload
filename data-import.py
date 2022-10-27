@@ -176,10 +176,10 @@ def list_branches(filterText=None):
 
     return res.text
 
-def delete_branch(id):
+def delete_branch(id, dryRun=False):
     payload = {
         "name": id,
-        "dryRun": False,
+        "dryRun": dryRun,
     }
 
     res = requests.delete(formatTemplate(URL_DELETE_BRANCH, prId=id), auth=AUTH, headers=POST_HEADERS, json=payload)
@@ -230,6 +230,8 @@ def upload_prs(data):
                 # Commit not found, using none commit (next code will generate lots of exceptions)
                 srcCommit = None
 
+            print("Creating branches for PR", pr.id)
+
             create_branch(formatBranchName(pr.id, SRC_BRANCH_PREFIX, pr.srcBranch), srcCommit)
             create_branch(formatBranchName(pr.id, DST_BRANCH_PREFIX, pr.dstBranch), pr.dstCommit)
         except requests.exceptions.HTTPError as e:
@@ -268,6 +270,8 @@ def upload_prs(data):
             descriptionParts.append(pr.body)
 
             newDescription = '\n'.join(descriptionParts)
+
+            print("Creating PR", pr.id)
 
             create_pr(newTitle, newDescription, formatBranchName(pr.id, SRC_BRANCH_PREFIX, pr.srcBranch), formatBranchName(pr.id, DST_BRANCH_PREFIX, pr.dstBranch))
         except requests.exceptions.HTTPError as e:
