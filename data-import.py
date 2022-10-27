@@ -18,6 +18,9 @@ from requests.auth import HTTPBasicAuth
 
 SRC_BRANCH_PREFIX = 'src'
 DST_BRANCH_PREFIX = 'dst'
+# Used by creation & filtering too, uses '[' for generating more specific output
+PR_START_NAME = "[Bitbucket Import"
+BRANCH_START_NAME = "bitbucket/"
 
 class ProcessingMode(Enum):
     LOAD_INFO = 1
@@ -136,7 +139,7 @@ def formatTemplate(template, prId=None, commitId=None):
     )
 
 def formatBranchName(id, prefix, originalName):
-    res = f'bitbucket/{id}/{prefix}/{originalName}'
+    res = f'{BRANCH_START_NAME}{id}/{prefix}/{originalName}'
 
     # we have limit of 111 chars
     # but it looks like need to be limited by 100:
@@ -281,7 +284,7 @@ def upload_prs(data):
     # Create pull requests
     for pr in prs:
         try:
-            newTitle = f"[Bitbucket Import {pr.id}, {pr.state}] {pr.title}"
+            newTitle = f"{PR_START_NAME} {pr.id}, {pr.state}] {pr.title}"
             descriptionParts = [
                 f"_Created by {pr.user}_",
                 f"_Closed by {pr.closedBy}_",
@@ -383,9 +386,9 @@ def main():
 
     if CURRENT_MODE == ProcessingMode.DELETE_BRANCHES_PRS:
         # Must be done before branches removing
-        delete_all_prs("[Bitbucket Import", "ALL")
+        delete_all_prs(PR_START_NAME, "ALL")
     if CURRENT_MODE == ProcessingMode.DELETE_BRANCHES or CURRENT_MODE == ProcessingMode.DELETE_BRANCHES_PRS:
-        delete_all_branches("bitbucket/")
+        delete_all_branches(BRANCH_START_NAME)
     if CURRENT_MODE != ProcessingMode.LOAD_INFO:
         return
 
