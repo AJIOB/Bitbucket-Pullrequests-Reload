@@ -4,8 +4,13 @@
 ## $2 = server URL (such as 'https://bitbucket.org/')
 ## $3 = server auth info: "username:password"
 ## $4 = server project/repo combination (such as 'my-workspace/test-repo')
+## $5 = (optional) additional options:
+### "" (nothing, not passed or not supported) = load info from file to PRs
+### -D = delete all created branches & PRs
+### -d = delete all created branches (keep PRs)
 
 import csv
+from enum import Enum
 import json
 import sys
 import requests
@@ -13,6 +18,13 @@ from requests.auth import HTTPBasicAuth
 
 SRC_BRANCH_PREFIX = 'src'
 DST_BRANCH_PREFIX = 'dst'
+
+class ProcessingMode(Enum):
+    LOAD_INFO = 1
+    DELETE_BRANCHES = 2
+    DELETE_BRANCHES_PRS = 3
+
+CURRENT_MODE = ProcessingMode.LOAD_INFO
 
 class PullRequest:
     def __init__(self, id, user, title, state, body, srcCommit, dstCommit, srcBranch, dstBranch, declineReason, mergeCommit, closedBy):
@@ -94,6 +106,14 @@ def args_read():
     PROJECT = prjRepoSplit[0].lower()
     REPO = prjRepoSplit[1].lower()
 
+    if len(sys.argv) > 5:
+        global CURRENT_MODE
+        mode = sys.argv[5]
+        if mode == '-D':
+            CURRENT_MODE = ProcessingMode.DELETE_BRANCHES_PRS
+        elif mode == '-d':
+            CURRENT_MODE = ProcessingMode.DELETE_BRANCHES
+
 def read_file(path):
     rows = []
     with open(path) as src:
@@ -119,7 +139,9 @@ def formatBranchName(id, prefix, originalName):
     res = f'bitbucket/{id}/{prefix}/{originalName}'
 
     # we have limit of 111 chars
-    return res[:111]
+    # but it looks like need to be limited by 100:
+    # https://jira.atlassian.com/browse/BSERV-10433
+    return res[:100]
 
 def create_pr(title, description = None, srcBranch = "prTest1", dstBranch = "stage"):
     payload = {
@@ -137,6 +159,17 @@ def create_pr(title, description = None, srcBranch = "prTest1", dstBranch = "sta
 
     res = requests.post(formatTemplate(URL_CREATE_PR), auth=AUTH, headers=POST_HEADERS, json=payload)
     res.raise_for_status()
+    return res.text
+
+def list_prs(start=0, state="OPEN"):
+    payload = {
+        "start": start,
+        "state": state,
+    }
+
+    res = requests.get(formatTemplate(URL_CREATE_PR), auth=AUTH, params=payload)
+    res.raise_for_status()
+
     return res.text
 
 def delete_pr(id, version):
@@ -164,8 +197,9 @@ def create_branch(name, commit):
     res.raise_for_status()
     return res.text
 
-def list_branches(filterText=None):
+def list_branches(filterText=None, start=0):
     payload = {
+        "start": start,
     }
 
     if filterText != None:
@@ -288,21 +322,72 @@ def upload_pr_comments(data):
     pass
 
 def delete_all_branches(filterText=None):
-    while True:
-        res = list_branches(filterText)
-        res = json.loads(res)
+    try:
+        while True:
+            res = list_branches(filterText)
+            res = json.loads(res)
 
-        for v in res["values"]:
-            branchId = v["id"]
-            print("Deleting", branchId)
-            delete_branch(branchId)
+            for v in res["values"]:
+                branchId = v["id"]
+                print("Deleting", branchId)
+                delete_branch(branchId)
 
-        if res["isLastPage"]:
-            break
+            if res["isLastPage"]:
+                break
+    except requests.exceptions.HTTPError as e:
+        print(f"HTTP Exception was caught while branch deleing")
+        print(f"HTTP code {e.response.status_code}")
+        print(e.response.text)
+        print()
+    except Exception as e:
+        print(f"Exception was caught while branch deleing")
+        print(e)
+        print()
+
+def delete_all_prs(filterTitle=None, state="OPEN", prVersion=0):
+    try:
+        start = 0
+
+        while True:
+            res = list_prs(start, state)
+            res = json.loads(res)
+
+            for v in res["values"]:
+                prId = v["id"]
+                prTitle = v["title"]
+                if filterTitle and not filterTitle in prTitle:
+                    start += 1
+
+                    print("Skipping PR", prId, "with title", prTitle)
+
+                    continue
+
+                print("Deleting PR", prId, "with title", prTitle)
+                delete_pr(prId, prVersion)
+
+            if res["isLastPage"]:
+                break
+    except requests.exceptions.HTTPError as e:
+        print(f"HTTP Exception was caught while branch deleing")
+        print(f"HTTP code {e.response.status_code}")
+        print(e.response.text)
+        print()
+    except Exception as e:
+        print(f"Exception was caught while branch deleing")
+        print(e)
+        print()
 
 def main():
     init()
     args_read()
+
+    if CURRENT_MODE == ProcessingMode.DELETE_BRANCHES_PRS:
+        # Must be done before branches removing
+        delete_all_prs("[Bitbucket Import", "ALL")
+    if CURRENT_MODE == ProcessingMode.DELETE_BRANCHES or CURRENT_MODE == ProcessingMode.DELETE_BRANCHES_PRS:
+        delete_all_branches("bitbucket/")
+    if CURRENT_MODE != ProcessingMode.LOAD_INFO:
+        return
 
     data = read_file(SRC_FILE)
     if len(data) == 0:
