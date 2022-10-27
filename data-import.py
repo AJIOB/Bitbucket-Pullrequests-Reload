@@ -6,6 +6,7 @@
 ## $4 = server project/repo combination (such as 'my-workspace/test-repo')
 
 import csv
+import json
 import sys
 import requests
 from requests.auth import HTTPBasicAuth
@@ -33,20 +34,28 @@ def init():
     csv.field_size_limit(sys.maxsize)
 
     # Init global templates
+    # Almost all from https://docs.atlassian.com/bitbucket-server/rest/5.16.0/bitbucket-rest.html
     global URL_CREATE_PR
-    URL_CREATE_PR = "{endpoint}projects/{projectKey}/repos/{repositorySlug}/pull-requests"
+    URL_CREATE_PR = "{endpoint}rest/api/{version}/projects/{projectKey}/repos/{repositorySlug}/pull-requests"
 
-    global URL_CREATE_COMMENT
-    URL_CREATE_COMMENT = "{endpoint}projects/{projectKey}/repos/{repositorySlug}/pull-requests/{pullRequestId}/comments"
+    global URL_CREATE_PR_COMMENT
+    URL_CREATE_PR_COMMENT = "{endpoint}rest/api/{version}/projects/{projectKey}/repos/{repositorySlug}/pull-requests/{pullRequestId}/comments"
 
     global URL_CLOSE_PR
-    URL_CLOSE_PR = "{endpoint}projects/{projectKey}/repos/{repositorySlug}/pull-requests/{pullRequestId}/decline"
+    URL_CLOSE_PR = "{endpoint}rest/api/{version}/projects/{projectKey}/repos/{repositorySlug}/pull-requests/{pullRequestId}/decline"
+
+    global URL_DELETE_PR
+    URL_DELETE_PR = "{endpoint}rest/api/{version}/projects/{projectKey}/repos/{repositorySlug}/pull-requests/{pullRequestId}"
 
     global URL_CREATE_BRANCH
-    URL_CREATE_BRANCH = "{endpoint}projects/{projectKey}/repos/{repositorySlug}/branches"
+    URL_CREATE_BRANCH = "{endpoint}rest/api/{version}/projects/{projectKey}/repos/{repositorySlug}/branches"
+
+    # From https://docs.atlassian.com/bitbucket-server/rest/5.16.0/bitbucket-branch-rest.html
+    global URL_DELETE_BRANCH
+    URL_DELETE_BRANCH = "{endpoint}rest/branch-utils/{version}/projects/{projectKey}/repos/{repositorySlug}/branches"
 
     global URL_GET_COMMIT
-    URL_GET_COMMIT = "{endpoint}projects/{projectKey}/repos/{repositorySlug}/commits/{commitId}"
+    URL_GET_COMMIT = "{endpoint}rest/api/{version}/projects/{projectKey}/repos/{repositorySlug}/commits/{commitId}"
 
     # From https://confluence.atlassian.com/cloudkb/xsrf-check-failed-when-calling-cloud-apis-826874382.html
     global POST_HEADERS
@@ -56,18 +65,19 @@ def args_read():
     global SRC_FILE
     SRC_FILE = sys.argv[1]
 
+    global SERVER
     SERVER = sys.argv[2]
     if not SERVER.endswith('/'):
         SERVER += '/'
 
+    global SERVER_API_VERSION
     # 1 for custom bitbucket server/datacenter, 2 for cloud
     if 'bitbucket.org' in SERVER:
         SERVER_API_VERSION = 2
     else:
         SERVER_API_VERSION = 1
 
-    global SERVER_API_ENDPOINT
-    SERVER_API_ENDPOINT = f"{SERVER}rest/api/{SERVER_API_VERSION}.0/"
+    SERVER_API_VERSION = f"{SERVER_API_VERSION}.0"
 
     USER_PASS = sys.argv[3]
     userPassSplit = USER_PASS.split(':')
@@ -96,7 +106,14 @@ def read_file(path):
     return rows
 
 def formatTemplate(template, prId=None, commitId=None):
-    return template.format(endpoint=SERVER_API_ENDPOINT, projectKey=PROJECT, repositorySlug=REPO, pullRequestId=prId, commitId=commitId)
+    return template.format(
+        endpoint=SERVER,
+        version=SERVER_API_VERSION,
+        projectKey=PROJECT,
+        repositorySlug=REPO,
+        pullRequestId=prId,
+        commitId=commitId
+    )
 
 def formatBranchName(id, prefix, originalName):
     res = f'bitbucket/{id}/{prefix}/{originalName}'
@@ -122,6 +139,15 @@ def create_pr(title, description = None, srcBranch = "prTest1", dstBranch = "sta
     res.raise_for_status()
     return res.text
 
+def delete_pr(id, version):
+    payload = {
+        "version": version,
+    }
+
+    res = requests.delete(formatTemplate(URL_DELETE_PR, prId=id), auth=AUTH, headers=POST_HEADERS, json=payload)
+    res.raise_for_status()
+    return res.text
+
 def get_commit_info(commitToRead):
     res = requests.get(formatTemplate(URL_GET_COMMIT, commitId = commitToRead), auth=AUTH)
     res.raise_for_status()
@@ -135,6 +161,28 @@ def create_branch(name, commit):
     }
 
     res = requests.post(formatTemplate(URL_CREATE_BRANCH), auth=AUTH, headers=POST_HEADERS, json=payload)
+    res.raise_for_status()
+    return res.text
+
+def list_branches(filterText=None):
+    payload = {
+    }
+
+    if filterText != None:
+        payload["filterText"] = filterText
+
+    res = requests.get(formatTemplate(URL_CREATE_BRANCH), auth=AUTH, params=payload)
+    res.raise_for_status()
+
+    return res.text
+
+def delete_branch(id):
+    payload = {
+        "name": id,
+        "dryRun": False,
+    }
+
+    res = requests.delete(formatTemplate(URL_DELETE_BRANCH, prId=id), auth=AUTH, headers=POST_HEADERS, json=payload)
     res.raise_for_status()
     return res.text
 
@@ -234,6 +282,19 @@ def upload_prs(data):
 
 def upload_pr_comments(data):
     pass
+
+def delete_all_branches(filterText=None):
+    while True:
+        res = list_branches(filterText)
+        res = json.loads(res)
+
+        for v in res["values"]:
+            branchId = v["id"]
+            print("Deleting", branchId)
+            delete_branch(branchId)
+
+        if res["isLastPage"]:
+            break
 
 def main():
     init()
