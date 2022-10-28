@@ -1,6 +1,6 @@
 #!/usr/bin/env python3.10
 # Args sequence:
-## $1 = source file name
+## $1 = source file name (csv-formatted data from ruby)
 ## $2 = server URL (such as 'https://bitbucket.org/')
 ## $3 = server auth info: "username:password"
 ## $4 = server project/repo combination (such as 'my-workspace/test-repo')
@@ -10,10 +10,13 @@
 ### -dAll = delete all created branches & PRs
 ### -dBranches = delete all created branches (keep PRs)
 ### -dPRs = delete all created PRs (keep branches)
+### any_filename.json = json file will additional info:
+#### - PR comments uses that info in format key:value, where key = diff URL (usually bitbucket API), value = downloaded diff info from that URL
 
 import csv
 from enum import Enum
 import json
+import re
 import requests
 from requests.auth import HTTPBasicAuth
 import sys
@@ -32,6 +35,7 @@ class ProcessingMode(Enum):
     LOAD_INFO_ONLY_PRS = 5
 
 CURRENT_MODE = ProcessingMode.LOAD_INFO
+JSON_ADDITIONAL_INFO = {}
 
 class PullRequest:
     def __init__(self, id, user, title, state, body, srcCommit, dstCommit, srcBranch, dstBranch, declineReason, mergeCommit, closedBy):
@@ -63,6 +67,11 @@ class PRComment:
         self.diffUrl = diffUrl
         self.parentCommentId = parentComment
         self.commit = commit
+
+class PullRequestShort:
+    def __init__(self, id, version):
+        self.id = id
+        self.version = version
 
 def init():
     # see https://stackoverflow.com/a/15063941/6818663
@@ -140,6 +149,10 @@ def args_read():
             CURRENT_MODE = ProcessingMode.DELETE_PRS
         elif mode == '-uPRs':
             CURRENT_MODE = ProcessingMode.LOAD_INFO_ONLY_PRS
+        elif mode.endswith('.json'):
+            with open(mode, "r") as f:
+                global JSON_ADDITIONAL_INFO
+                JSON_ADDITIONAL_INFO = json.load(f)
 
 def read_file(path):
     rows = []
@@ -308,6 +321,8 @@ def upload_prs(data):
     # Create pull requests
     for pr in prs:
         try:
+            # First number in title must be original PR number
+            # for correct comments uploading
             newTitle = f"{PR_START_NAME} {pr.id}, {pr.state}] {pr.title}"
             descriptionParts = [
                 f"_Created by {pr.user}_",
@@ -346,7 +361,7 @@ def upload_prs(data):
             print()
 
 # Returns True if base PR comment exists, else False
-def form_single_pr_comment(newCommentIds, currComment):
+def form_single_pr_comment(currComment, newCommentIds, prInfo, diffs={}):
     # TODO: implement
 
     try:
@@ -355,12 +370,12 @@ def form_single_pr_comment(newCommentIds, currComment):
         # TODO: real uploading
 
     except requests.exceptions.HTTPError as e:
-        print(f"HTTP Exception was caught for PR {pr.id} PR creation")
+        print(f"HTTP Exception was caught for PR {pr.prId} comment {currComment.id} creation")
         print(f"HTTP code {e.response.status_code}")
         print(e.response.text)
         print()
     except Exception as e:
-        print(f"Exception was caught for PR {pr.id} PR creation")
+        print(f"Exception was caught for PR {pr.prId} comment {currComment.id} creation")
         print(e)
         print()
 
@@ -394,13 +409,55 @@ def upload_pr_comments(data):
         comment = PRComment(repo, prNumber, user, currType, currId, body, isDeleted, toLine, fromLine, file, diffUrl, parentComment, commit)
         comments.append(comment)
 
+    prInfo = {}
+
+    # Loading PR info
+    pagingOffset = 0
+    while True:
+        try:
+            print(f"Loading PR info with paging offset {pagingOffset}")
+
+            res = list_prs(pagingOffset, "ALL")
+            res = json.loads(res)
+
+            for v in res["values"]:
+                prId = v["id"]
+                prTitle = v["title"]
+                prVersion = v["version"]
+                if PR_START_NAME and not PR_START_NAME in prTitle:
+                    continue
+
+                # get first number, as described in PR title creation
+                numberSearch = re.search(r'\d+', prTitle)
+                if not numberSearch:
+                    print(f"Bad PR {prId}: unsupported title: '{prTitle}'")
+                    continue
+
+                originalPrId = numberSearch.group()
+
+                prInfo[originalPrId] = PullRequestShort(prId, prVersion)
+
+            if res["isLastPage"]:
+                break
+
+            pagingOffset = res["nextPageStart"]
+        except requests.exceptions.HTTPError as e:
+            print(f"HTTP Exception was caught while loading PR info (pagination offset {pagingOffset})")
+            print(f"HTTP code {e.response.status_code}")
+            print(e.response.text)
+            print()
+        except Exception as e:
+            print(f"Exception was caught while loading PR info (pagination offset {pagingOffset})")
+            print(e)
+            print()
+
     # key will be old comment id, value will be new comment id
     newCommentIds = {}
 
     commentsToCheckAgain = []
 
     for c in comments:
-        if not form_single_pr_comment(newCommentIds, c):
+        if not form_single_pr_comment(c, newCommentIds, prInfo, JSON_ADDITIONAL_INFO):
             commentsToCheckAgain.append(c)
 
     prevCommentNumber = 0
@@ -413,7 +470,7 @@ def upload_pr_comments(data):
 
         newCommentsToCheckAgain = []
         for c in commentsToCheckAgain:
-            if not form_single_pr_comment(newCommentIds, c):
+            if not form_single_pr_comment(c, newCommentIds, prInfo, JSON_ADDITIONAL_INFO):
                 newCommentsToCheckAgain.append(c)
 
         # save prev iteration as current
