@@ -51,17 +51,17 @@ class PullRequest:
 class PRComment:
     def __init__(self, repo, prNumber, user, currType, currId, body, isDeleted, toLine, fromLine, file, diffUrl, parentComment, commit):
         self.repo = repo
-        self.prNumber = prNumber
+        self.prId = prNumber
         self.user = user
         self.currType = currType
-        self.currId = currId
+        self.id = currId
         self.body = body
         self.isDeleted = isDeleted
         self.toLine = toLine
         self.fromLine = fromLine
         self.file = file
         self.diffUrl = diffUrl
-        self.parentComment = parentComment
+        self.parentCommentId = parentComment
         self.commit = commit
 
 def init():
@@ -345,10 +345,31 @@ def upload_prs(data):
             print(e)
             print()
 
+# Returns True if base PR comment exists, else False
+def form_single_pr_comment(newCommentIds, currComment):
+    # TODO: implement
+
+    try:
+        print("Uploading comment", currComment.id, "for original PR", currComment.prId)
+
+        # TODO: real uploading
+
+    except requests.exceptions.HTTPError as e:
+        print(f"HTTP Exception was caught for PR {pr.id} PR creation")
+        print(f"HTTP code {e.response.status_code}")
+        print(e.response.text)
+        print()
+    except Exception as e:
+        print(f"Exception was caught for PR {pr.id} PR creation")
+        print(e)
+        print()
+
+    return True
+
 def upload_pr_comments(data):
     headers = data[0]
 
-    comments = {}
+    comments = []
 
     # Parse data
     for d in data[1:]:
@@ -371,10 +392,37 @@ def upload_pr_comments(data):
             continue
 
         comment = PRComment(repo, prNumber, user, currType, currId, body, isDeleted, toLine, fromLine, file, diffUrl, parentComment, commit)
-        comments[currId] = comment
+        comments.append(comment)
 
-    # TODO: implement
-    pass
+    # key will be old comment id, value will be new comment id
+    newCommentIds = {}
+
+    commentsToCheckAgain = []
+
+    for c in comments:
+        if not form_single_pr_comment(newCommentIds, c):
+            commentsToCheckAgain.append(c)
+
+    prevCommentNumber = 0
+
+    print(len(commentsToCheckAgain), "comments will be checked for loading again")
+
+    # Block for infinite loop
+    while prevCommentNumber != len(commentsToCheckAgain):
+        prevCommentNumber = len(commentsToCheckAgain)
+
+        newCommentsToCheckAgain = []
+        for c in commentsToCheckAgain:
+            if not form_single_pr_comment(newCommentIds, c):
+                newCommentsToCheckAgain.append(c)
+
+        # save prev iteration as current
+        commentsToCheckAgain = newCommentsToCheckAgain
+
+    if len(commentsToCheckAgain) != 0:
+        print("Cannot find parents for that comments:")
+        for c in commentsToCheckAgain:
+            print("ID", c.id, "body", c.body)
 
 def delete_all_branches(filterText=None):
     try:
@@ -399,7 +447,7 @@ def delete_all_branches(filterText=None):
         print(e)
         print()
 
-def delete_all_prs(filterTitle=None, state="OPEN", prVersion=0):
+def delete_all_prs(filterTitle=None, state="OPEN"):
     try:
         start = 0
 
@@ -410,6 +458,7 @@ def delete_all_prs(filterTitle=None, state="OPEN", prVersion=0):
             for v in res["values"]:
                 prId = v["id"]
                 prTitle = v["title"]
+                prVersion = v["version"]
                 if filterTitle and not filterTitle in prTitle:
                     start += 1
 
