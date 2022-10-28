@@ -6,8 +6,9 @@
 ## $4 = server project/repo combination (such as 'my-workspace/test-repo')
 ## $5 = (optional) additional options:
 ### "" (nothing, not passed or not supported) = load info from file to PRs
-### -D = delete all created branches & PRs
-### -d = delete all created branches (keep PRs)
+### -dAll = delete all created branches & PRs
+### -dBranches = delete all created branches (keep PRs)
+### -dPRs = delete all created PRs (keep branches)
 
 import csv
 from enum import Enum
@@ -26,6 +27,7 @@ class ProcessingMode(Enum):
     LOAD_INFO = 1
     DELETE_BRANCHES = 2
     DELETE_BRANCHES_PRS = 3
+    DELETE_PRS = 4
 
 CURRENT_MODE = ProcessingMode.LOAD_INFO
 
@@ -128,10 +130,12 @@ def args_read():
     if len(sys.argv) > 5:
         global CURRENT_MODE
         mode = sys.argv[5]
-        if mode == '-D':
+        if mode == '-dAll':
             CURRENT_MODE = ProcessingMode.DELETE_BRANCHES_PRS
-        elif mode == '-d':
+        elif mode == '-dBranches':
             CURRENT_MODE = ProcessingMode.DELETE_BRANCHES
+        elif mode == '-dPRs':
+            CURRENT_MODE = ProcessingMode.DELETE_PRS
 
 def read_file(path):
     rows = []
@@ -427,7 +431,7 @@ def main():
     init()
     args_read()
 
-    if CURRENT_MODE == ProcessingMode.DELETE_BRANCHES_PRS:
+    if CURRENT_MODE == ProcessingMode.DELETE_BRANCHES_PRS or CURRENT_MODE == ProcessingMode.DELETE_PRS:
         # Must be done before branches removing
         delete_all_prs(PR_START_NAME, "ALL")
     if CURRENT_MODE == ProcessingMode.DELETE_BRANCHES or CURRENT_MODE == ProcessingMode.DELETE_BRANCHES_PRS:
