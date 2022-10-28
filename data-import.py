@@ -220,12 +220,12 @@ def delete_pr(id, version):
     res.raise_for_status()
     return res.text
 
-def create_pr_file_comment(prId, text, filePath, lineNum, fileType="TO", fromHash=None, toHash=None, diffType="RANGE"):
+def create_pr_file_comment(prId, text, filePath, lineNum, fileType="TO", lineType="CONTEXT", fromHash=None, toHash=None, diffType="RANGE"):
     payload = {
         "text": text,
         "anchor": {
             "line": lineNum,
-            "lineType": "CONTEXT",
+            "lineType": lineType,
             "fileType": fileType,
             "path": filePath,
         },
@@ -419,27 +419,32 @@ def form_single_pr_comment(currComment, newCommentIds, prInfo, diffs={}):
     if currComment.isDeleted == 'true':
         print(f"Comment {currComment.id} for original PR {currComment.prId} was deleted")
         textParts.append("Message was previously deleted")
-        textParts.append("")
+    textParts.append("")
 
     # Printing before diff, because diff may be very long
     textParts.append(f"Original message:")
     textParts.append(currComment.body)
+    textParts.append("")
 
     lineNum = None
     if currComment.file != '':
         if currComment.fromLine != '':
-            lineType = 'FROM'
-            lineTypeText = 'Source'
+            fileType = 'FROM'
+            fileTypeText = 'Source'
+            lineType = 'REMOVED'
             lineNum = currComment.fromLine
         else:
-            lineType = 'TO'
-            lineTypeText = 'Current'
+            fileType = 'TO'
+            fileTypeText = 'Current'
+            lineType = 'ADDED'
             lineNum = currComment.toLine
 
         # Printing source file & diff info only for root comment
         if not parent:
+            # Force delim info from source message
+            textParts.append("----")
             textParts.append(f"Source file ***{currComment.file}***")
-            textParts.append(f"{lineTypeText} commit line {lineNum}")
+            textParts.append(f"{fileTypeText} commit line {lineNum}")
             textParts.append("")
 
         if currComment.diffUrl:
@@ -451,7 +456,6 @@ def form_single_pr_comment(currComment, newCommentIds, prInfo, diffs={}):
                     textParts.append("```")
                 else:
                     textParts.append(f"Original diff with URL {currComment.diffUrl} was lost")
-                textParts.append("")
 
     # merge parts to single text
     text = '\n'.join(textParts)
@@ -466,7 +470,7 @@ def form_single_pr_comment(currComment, newCommentIds, prInfo, diffs={}):
             if currComment.file:
                 try:
                     # Trying to create file with bitbucket diff, not our
-                    res = create_pr_file_comment(newPr.id, text, currComment.file, lineNum, lineType)
+                    res = create_pr_file_comment(newPr.id, text, currComment.file, lineNum, fileType, lineType)
                 except requests.exceptions.HTTPError as e:
                     print(f"Creating file comment {currComment.id} from PR {currComment.prId} as usual file. HTTP error {e.response.status_code}, message {e.response.text}")
                 except Exception as e:
