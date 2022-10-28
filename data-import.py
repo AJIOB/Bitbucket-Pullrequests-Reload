@@ -6,6 +6,7 @@
 ## $4 = server project/repo combination (such as 'my-workspace/test-repo')
 ## $5 = (optional) additional options:
 ### "" (nothing, not passed or not supported) = load info from file to PRs
+### -uPRs = load info from file to PRs (not recreate branches)
 ### -dAll = delete all created branches & PRs
 ### -dBranches = delete all created branches (keep PRs)
 ### -dPRs = delete all created PRs (keep branches)
@@ -28,6 +29,7 @@ class ProcessingMode(Enum):
     DELETE_BRANCHES = 2
     DELETE_BRANCHES_PRS = 3
     DELETE_PRS = 4
+    LOAD_INFO_ONLY_PRS = 5
 
 CURRENT_MODE = ProcessingMode.LOAD_INFO
 
@@ -136,6 +138,8 @@ def args_read():
             CURRENT_MODE = ProcessingMode.DELETE_BRANCHES
         elif mode == '-dPRs':
             CURRENT_MODE = ProcessingMode.DELETE_PRS
+        elif mode == '-uPRs':
+            CURRENT_MODE = ProcessingMode.LOAD_INFO_ONLY_PRS
 
 def read_file(path):
     rows = []
@@ -270,35 +274,36 @@ def upload_prs(data):
         pr = PullRequest(number, user, title, state, body, src, dst, srcBranch, dstBranch, declineReason, mergeCommit, closedBy)
         prs.append(pr)
 
-    # Create branches
-    for pr in prs:
-        try:
-            srcCommit = pr.srcCommit
+    if CURRENT_MODE != ProcessingMode.LOAD_INFO_ONLY_PRS:
+        # Create branches
+        for pr in prs:
             try:
-                get_commit_info(srcCommit)
+                srcCommit = pr.srcCommit
+                try:
+                    get_commit_info(srcCommit)
+                except requests.exceptions.HTTPError as e:
+                    # Commit not found, using merge commit
+                    srcCommit = pr.mergeCommit
+
+                try:
+                    get_commit_info(srcCommit)
+                except requests.exceptions.HTTPError as e:
+                    # Commit not found, using none commit (next code will generate lots of exceptions)
+                    srcCommit = None
+
+                print("Creating branches for PR", pr.id)
+
+                create_branch(formatBranchName(pr.id, SRC_BRANCH_PREFIX, pr.srcBranch), srcCommit)
+                create_branch(formatBranchName(pr.id, DST_BRANCH_PREFIX, pr.dstBranch), pr.dstCommit)
             except requests.exceptions.HTTPError as e:
-                # Commit not found, using merge commit
-                srcCommit = pr.mergeCommit
-
-            try:
-                get_commit_info(srcCommit)
-            except requests.exceptions.HTTPError as e:
-                # Commit not found, using none commit (next code will generate lots of exceptions)
-                srcCommit = None
-
-            print("Creating branches for PR", pr.id)
-
-            create_branch(formatBranchName(pr.id, SRC_BRANCH_PREFIX, pr.srcBranch), srcCommit)
-            create_branch(formatBranchName(pr.id, DST_BRANCH_PREFIX, pr.dstBranch), pr.dstCommit)
-        except requests.exceptions.HTTPError as e:
-            print(f"HTTP Exception was caught for PR {pr.id} branch creation")
-            print(f"HTTP code {e.response.status_code}")
-            print(e.response.text)
-            print()
-        except Exception as e:
-            print(f"Exception was caught for PR {pr.id} branch creation")
-            print(e)
-            print()
+                print(f"HTTP Exception was caught for PR {pr.id} branch creation")
+                print(f"HTTP code {e.response.status_code}")
+                print(e.response.text)
+                print()
+            except Exception as e:
+                print(f"Exception was caught for PR {pr.id} branch creation")
+                print(e)
+                print()
 
     # Create pull requests
     for pr in prs:
@@ -436,7 +441,7 @@ def main():
         delete_all_prs(PR_START_NAME, "ALL")
     if CURRENT_MODE == ProcessingMode.DELETE_BRANCHES or CURRENT_MODE == ProcessingMode.DELETE_BRANCHES_PRS:
         delete_all_branches(BRANCH_START_NAME)
-    if CURRENT_MODE != ProcessingMode.LOAD_INFO:
+    if CURRENT_MODE != ProcessingMode.LOAD_INFO and CURRENT_MODE != ProcessingMode.LOAD_INFO_ONLY_PRS:
         return
 
     data = read_file(SRC_FILE)
