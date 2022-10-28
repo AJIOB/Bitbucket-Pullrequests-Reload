@@ -408,7 +408,7 @@ def form_single_pr_comment(currComment, newCommentIds, prInfo, diffs={}):
         f"Created by _{currComment.user}_ for commit {currComment.commit}",
     ]
 
-    if currComment.isDeleted:
+    if currComment.isDeleted == 'true':
         print(f"Comment {currComment.id} for original PR {currComment.prId} was deleted")
         textParts.append("Message was previously deleted")
         textParts.append("")
@@ -424,7 +424,7 @@ def form_single_pr_comment(currComment, newCommentIds, prInfo, diffs={}):
             lineTypeText = 'Current'
             lineNum = currComment.toLine
 
-        textParts.append(f"Source file '{currComment.file}'")
+        textParts.append(f"Source file ***{currComment.file}***")
         textParts.append(f"{lineTypeText} commit line {lineNum}")
         textParts.append("")
 
@@ -447,6 +447,7 @@ def form_single_pr_comment(currComment, newCommentIds, prInfo, diffs={}):
     try:
         print("Uploading comment", currComment.id, "for original PR", currComment.prId)
 
+        res = None
         if parent != None:
             res = create_pr_comment(newPr.id, text, parent)
         else:
@@ -460,8 +461,6 @@ def form_single_pr_comment(currComment, newCommentIds, prInfo, diffs={}):
             # file comment was not created or that is usual comment
             if not res:
                 res = create_pr_comment(newPr.id, text)
-
-        print("Comment", currComment.id, "for original PR", currComment.prId, "was uploaded")
 
         res = json.loads(res)
         newCommentIds[currComment.id] = res["id"]
