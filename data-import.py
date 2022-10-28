@@ -1,4 +1,22 @@
 #!/usr/bin/env python3.10
+# Created by AJIOB, 2022
+#
+# Full restoring sequence should be:
+# 1. Using test repo with the same sources, as in original
+# 2. Restoring all PRs & branches (csv with PRs, $5 should be empty)
+# 3. Restoring all PR comments (csv with PR comments, $5 should be with JSON file or empty)
+# 4. Close all PRs (any csv, $5 = '-cPRs')
+# 5. Delete all created branches (any csv, $5 = '-dBranches')
+#
+# If results are correct, you can do that on production repo with the same sources, as in test/original repos. Command subsequence will be the equal, as for testing.
+#
+# Notes:
+# - repo name must be the same in restoring time, because of CSV with multiple repo info are supported
+# - you should create PR with attached CSV & JSON files for possible next re-restoring in another format or repo
+# - tested with Bitbucket Server v8.5.0 (not Bitbucket Cloud)
+# - Bitbucket app key (HTTP access token) should be used instead of real password (with repository write permissions)
+# - as told in Bitbucket REST API docs (https://docs.atlassian.com/bitbucket-server/rest/5.16.0/bitbucket-rest.html, "Personal Repositories" part), if you want to access user project instead of workspace project, you should add '~' before your username. For example, use '~alex/my-repo' for accessing 'alex' personal workspace
+#
 # Args sequence:
 ## $1 = source file name (csv-formatted data from ruby)
 ## $2 = server URL (such as 'https://bitbucket.org/')
