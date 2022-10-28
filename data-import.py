@@ -53,13 +53,14 @@ class PullRequest:
         self.closedBy = closedBy
 
 class PRComment:
-    def __init__(self, repo, prNumber, user, currType, currId, body, isDeleted, toLine, fromLine, file, diffUrl, parentComment, commit):
+    def __init__(self, repo, prNumber, user, currType, currId, body, bodyHtml, isDeleted, toLine, fromLine, file, diffUrl, parentComment, commit):
         self.repo = repo
         self.prId = prNumber
         self.user = user
         self.currType = currType
         self.id = currId
         self.body = body
+        self.bodyHtml = bodyHtml
         self.isDeleted = isDeleted
         self.toLine = toLine
         self.fromLine = fromLine
@@ -397,6 +398,31 @@ def upload_prs(data):
             print(e)
             print()
 
+def pr_comment_process_body(comment):
+    raw = comment.body
+    html = comment.bodyHtml
+
+    # Processing username cites
+    # They are formatted in raw body as @{GUID} or @{number:GUID}
+    matches = re.findall(r'@\{(?:\d+:)?[0-9A-Fa-f-]+\}', raw)
+    # Force making matches unique
+    matches = set(matches)
+    ## need to replace all matches
+    for m in matches:
+        realId = m[2:-1]
+        # '@' not in match for removing unwanted triggers
+        idSearch = re.search(re.escape(realId) + r'"[^>]*>@([^<>]*)</', html)
+        if not idSearch:
+            print(f"Corrupted HTML message for comment {comment.id} for original PR {comment.prId}")
+            continue
+
+        realUser = idSearch.group(1)
+
+        # User name will be bold & italic
+        raw = raw.replace(m, f"***{realUser}***")
+
+    return raw
+
 # Returns True if base PR comment exists, else False
 def form_single_pr_comment(currComment, newCommentIds, prInfo, diffs={}):
     # Receiving PR info
@@ -423,7 +449,7 @@ def form_single_pr_comment(currComment, newCommentIds, prInfo, diffs={}):
 
     # Printing before diff, because diff may be very long
     textParts.append(f"Original message:")
-    textParts.append(currComment.body)
+    textParts.append(pr_comment_process_body(currComment))
     textParts.append("")
 
     lineNum = None
@@ -508,6 +534,7 @@ def upload_pr_comments(data):
         currType = d[headers.index('CommentType')]
         currId = d[headers.index('CommentID')]
         body = d[headers.index('BodyRaw')]
+        bodyHtml = d[headers.index('BodyHTML')]
         isDeleted = d[headers.index('IsDeleted')]
         toLine = d[headers.index('ToLine')]
         fromLine = d[headers.index('FromLine')]
@@ -520,7 +547,7 @@ def upload_pr_comments(data):
             # Block creating another PRs
             continue
 
-        comment = PRComment(repo, prNumber, user, currType, currId, body, isDeleted, toLine, fromLine, file, diffUrl, parentComment, commit)
+        comment = PRComment(repo, prNumber, user, currType, currId, body, bodyHtml, isDeleted, toLine, fromLine, file, diffUrl, parentComment, commit)
         comments.append(comment)
 
     prInfo = {}
