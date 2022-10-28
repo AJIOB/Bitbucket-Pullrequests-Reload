@@ -38,12 +38,13 @@ CURRENT_MODE = ProcessingMode.LOAD_INFO
 JSON_ADDITIONAL_INFO = {}
 
 class PullRequest:
-    def __init__(self, id, user, title, state, body, srcCommit, dstCommit, srcBranch, dstBranch, declineReason, mergeCommit, closedBy):
+    def __init__(self, id, user, title, state, body, bodyHtml, srcCommit, dstCommit, srcBranch, dstBranch, declineReason, mergeCommit, closedBy):
         self.id = id
         self.user = user
         self.title = title
         self.state = state
         self.body = body
+        self.bodyHtml = bodyHtml
         self.srcCommit = srcCommit
         self.dstCommit = dstCommit
         self.srcBranch = srcBranch
@@ -307,6 +308,7 @@ def upload_prs(data):
         title = d[headers.index('Title')]
         state = d[headers.index('State')]
         body = d[headers.index('BodyRaw')]
+        bodyHtml = d[headers.index('BodyHTML')]
         src = d[headers.index('SourceCommit')]
         dst = d[headers.index('DestinationCommit')]
         srcBranch = d[headers.index('SourceBranch')]
@@ -319,7 +321,7 @@ def upload_prs(data):
             # Block creating another PRs
             continue
 
-        pr = PullRequest(number, user, title, state, body, src, dst, srcBranch, dstBranch, declineReason, mergeCommit, closedBy)
+        pr = PullRequest(number, user, title, state, body, bodyHtml, src, dst, srcBranch, dstBranch, declineReason, mergeCommit, closedBy)
         prs.append(pr)
 
     # Should create old PRs at the beginning
@@ -381,7 +383,7 @@ def upload_prs(data):
                 descriptionParts.append('')
 
             descriptionParts.append("Original description:")
-            descriptionParts.append(pr.body)
+            descriptionParts.append(pr_all_process_body(pr))
 
             newDescription = '\n'.join(descriptionParts)
 
@@ -398,7 +400,7 @@ def upload_prs(data):
             print(e)
             print()
 
-def pr_comment_process_body(comment):
+def pr_all_process_body(comment):
     raw = comment.body
     html = comment.bodyHtml
 
@@ -413,7 +415,7 @@ def pr_comment_process_body(comment):
         # '@' not in match for removing unwanted triggers
         idSearch = re.search(re.escape(realId) + r'"[^>]*>@([^<>]*)</', html)
         if not idSearch:
-            print(f"Corrupted HTML message for comment {comment.id} for original PR {comment.prId}")
+            print(f"Corrupted HTML message for object {comment.id}")
             continue
 
         realUser = idSearch.group(1)
@@ -449,7 +451,7 @@ def form_single_pr_comment(currComment, newCommentIds, prInfo, diffs={}):
 
     # Printing before diff, because diff may be very long
     textParts.append(f"Original message:")
-    textParts.append(pr_comment_process_body(currComment))
+    textParts.append(pr_all_process_body(currComment))
     textParts.append("")
 
     lineNum = None
