@@ -24,6 +24,7 @@
 ## $4 = server project/repo combination (such as 'my-workspace/test-repo')
 ## $5 = (optional) additional options:
 ### "" (nothing, not passed or not supported) = load info from file to PRs
+### -debug = print input variables & exit
 ### -uPRs = load info from file to PRs (not recreate branches)
 ### -dAll = delete all created branches & PRs
 ### -dBranches = delete all created branches (keep PRs)
@@ -53,6 +54,7 @@ class ProcessingMode(Enum):
     DELETE_PRS = 4
     LOAD_INFO_ONLY_PRS = 5
     CLOSE_PRS = 6
+    DEBUG = 7
 
 CURRENT_MODE = ProcessingMode.LOAD_INFO
 JSON_ADDITIONAL_INFO = {}
@@ -173,6 +175,8 @@ def args_read():
             CURRENT_MODE = ProcessingMode.LOAD_INFO_ONLY_PRS
         elif mode == '-cPRs':
             CURRENT_MODE = ProcessingMode.CLOSE_PRS
+        elif mode == '-debug':
+            CURRENT_MODE = ProcessingMode.DEBUG
         elif mode.endswith('.json'):
             with open(mode, "r") as f:
                 global JSON_ADDITIONAL_INFO
@@ -753,6 +757,16 @@ def delete_all_prs(filterTitle=None, state="OPEN"):
 def main():
     init()
     args_read()
+
+    if CURRENT_MODE == ProcessingMode.DEBUG:
+        print("Src:", SRC_FILE)
+        print("URL:", SERVER)
+        print("API:", SERVER_API_VERSION)
+        print("Auth:", AUTH.username, AUTH.password)
+        print("Prj:", PROJECT)
+        print("Repo:", REPO)
+
+        return
 
     if CURRENT_MODE == ProcessingMode.CLOSE_PRS:
         close_all_prs(PR_START_NAME)
