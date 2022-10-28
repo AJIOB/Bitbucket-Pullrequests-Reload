@@ -220,7 +220,7 @@ def delete_pr(id, version):
     res.raise_for_status()
     return res.text
 
-def create_pr_file_comment(prId, text, filePath, lineNum, fileType="TO"):
+def create_pr_file_comment(prId, text, filePath, lineNum, fileType="TO", fromHash=None, toHash=None, diffType="RANGE"):
     payload = {
         "text": text,
         "anchor": {
@@ -230,6 +230,11 @@ def create_pr_file_comment(prId, text, filePath, lineNum, fileType="TO"):
             "path": filePath,
         },
     }
+
+    if fromHash or toHash:
+        payload["anchor"]["fromHash"] = fromHash
+        payload["anchor"]["toHash"] = toHash
+        payload["anchor"]["diffType"] = diffType
 
     res = requests.post(formatTemplate(URL_CREATE_PR_COMMENT, prId=prId), auth=AUTH, headers=POST_HEADERS, json=payload)
     res.raise_for_status()
@@ -315,6 +320,9 @@ def upload_prs(data):
 
         pr = PullRequest(number, user, title, state, body, src, dst, srcBranch, dstBranch, declineReason, mergeCommit, closedBy)
         prs.append(pr)
+
+    # Should create old PRs at the beginning
+    prs.reverse()
 
     if CURRENT_MODE != ProcessingMode.LOAD_INFO_ONLY_PRS:
         # Create branches
@@ -413,6 +421,10 @@ def form_single_pr_comment(currComment, newCommentIds, prInfo, diffs={}):
         textParts.append("Message was previously deleted")
         textParts.append("")
 
+    # Printing before diff, because diff may be very long
+    textParts.append(f"Original message:")
+    textParts.append(currComment.body)
+
     lineNum = None
     if currComment.file != '':
         if currComment.fromLine != '':
@@ -424,22 +436,22 @@ def form_single_pr_comment(currComment, newCommentIds, prInfo, diffs={}):
             lineTypeText = 'Current'
             lineNum = currComment.toLine
 
-        textParts.append(f"Source file ***{currComment.file}***")
-        textParts.append(f"{lineTypeText} commit line {lineNum}")
-        textParts.append("")
-
-        if currComment.diffUrl:
-            if currComment.diffUrl in diffs:
-                textParts.append("Original diff:")
-                textParts.append("```diff")
-                textParts.append(diffs[currComment.diffUrl])
-                textParts.append("```")
-            else:
-                textParts.append(f"Original diff with URL {currComment.diffUrl} was lost")
+        # Printing source file & diff info only for root comment
+        if not parent:
+            textParts.append(f"Source file ***{currComment.file}***")
+            textParts.append(f"{lineTypeText} commit line {lineNum}")
             textParts.append("")
 
-    textParts.append(f"Original message:")
-    textParts.append(currComment.body)
+        if currComment.diffUrl:
+            if not parent:
+                if currComment.diffUrl in diffs:
+                    textParts.append("Original diff:")
+                    textParts.append("```diff")
+                    textParts.append(diffs[currComment.diffUrl])
+                    textParts.append("```")
+                else:
+                    textParts.append(f"Original diff with URL {currComment.diffUrl} was lost")
+                textParts.append("")
 
     # merge parts to single text
     text = '\n'.join(textParts)
@@ -455,8 +467,10 @@ def form_single_pr_comment(currComment, newCommentIds, prInfo, diffs={}):
                 try:
                     # Trying to create file with bitbucket diff, not our
                     res = create_pr_file_comment(newPr.id, text, currComment.file, lineNum, lineType)
+                except requests.exceptions.HTTPError as e:
+                    print(f"Creating file comment {currComment.id} from PR {currComment.prId} as usual file. HTTP error {e.response.status_code}, message {e.response.text}")
                 except Exception as e:
-                    print(f"Creating file comment {currComment.id} from PR {currComment.prId} as usual file")
+                    print(f"Creating file comment {currComment.id} from PR {currComment.prId} as usual file. Error message {e}")
 
             # file comment was not created or that is usual comment
             if not res:
