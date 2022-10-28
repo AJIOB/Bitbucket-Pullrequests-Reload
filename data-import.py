@@ -9,6 +9,7 @@
 ### -uPRs = load info from file to PRs (not recreate branches)
 ### -dAll = delete all created branches & PRs
 ### -dBranches = delete all created branches (keep PRs)
+### -cPRs = close (decline) all created PRs
 ### -dPRs = delete all created PRs (keep branches)
 ### any_filename.json = json file will additional info:
 #### - PR comments uses that info in format key:value, where key = diff URL (usually bitbucket API), value = downloaded diff info from that URL
@@ -33,6 +34,7 @@ class ProcessingMode(Enum):
     DELETE_BRANCHES_PRS = 3
     DELETE_PRS = 4
     LOAD_INFO_ONLY_PRS = 5
+    CLOSE_PRS = 6
 
 CURRENT_MODE = ProcessingMode.LOAD_INFO
 JSON_ADDITIONAL_INFO = {}
@@ -151,6 +153,8 @@ def args_read():
             CURRENT_MODE = ProcessingMode.DELETE_PRS
         elif mode == '-uPRs':
             CURRENT_MODE = ProcessingMode.LOAD_INFO_ONLY_PRS
+        elif mode == '-cPRs':
+            CURRENT_MODE = ProcessingMode.CLOSE_PRS
         elif mode.endswith('.json'):
             with open(mode, "r") as f:
                 global JSON_ADDITIONAL_INFO
@@ -211,6 +215,15 @@ def list_prs(start=0, state="OPEN"):
     res = requests.get(formatTemplate(URL_CREATE_PR), auth=AUTH, params=payload)
     res.raise_for_status()
 
+    return res.text
+
+def close_pr(id, version):
+    payload = {
+        "version": version,
+    }
+
+    res = requests.post(formatTemplate(URL_CLOSE_PR, prId=id), auth=AUTH, headers=POST_HEADERS, params=payload)
+    res.raise_for_status()
     return res.text
 
 def delete_pr(id, version):
@@ -638,12 +651,48 @@ def delete_all_branches(filterText=None):
             if res["isLastPage"]:
                 break
     except requests.exceptions.HTTPError as e:
-        print(f"HTTP Exception was caught while branch deleing")
+        print(f"HTTP Exception was caught while all branches deleting")
         print(f"HTTP code {e.response.status_code}")
         print(e.response.text)
         print()
     except Exception as e:
-        print(f"Exception was caught while branch deleing")
+        print(f"Exception was caught while all branches deleting")
+        print(e)
+        print()
+
+def close_all_prs(filterTitle=None):
+    state="OPEN"
+
+    try:
+        start = 0
+
+        while True:
+            res = list_prs(start, state)
+            res = json.loads(res)
+
+            for v in res["values"]:
+                prId = v["id"]
+                prTitle = v["title"]
+                prVersion = v["version"]
+                if filterTitle and not filterTitle in prTitle:
+                    start += 1
+
+                    print("Skipping PR", prId, "with title", prTitle)
+
+                    continue
+
+                print("Closing PR", prId, "with title", prTitle)
+                close_pr(prId, prVersion)
+
+            if res["isLastPage"]:
+                break
+    except requests.exceptions.HTTPError as e:
+        print(f"HTTP Exception was caught while all PRs closing")
+        print(f"HTTP code {e.response.status_code}")
+        print(e.response.text)
+        print()
+    except Exception as e:
+        print(f"Exception was caught while all PRs closing")
         print(e)
         print()
 
@@ -672,18 +721,22 @@ def delete_all_prs(filterTitle=None, state="OPEN"):
             if res["isLastPage"]:
                 break
     except requests.exceptions.HTTPError as e:
-        print(f"HTTP Exception was caught while branch deleing")
+        print(f"HTTP Exception was caught while all PRs deleting")
         print(f"HTTP code {e.response.status_code}")
         print(e.response.text)
         print()
     except Exception as e:
-        print(f"Exception was caught while branch deleing")
+        print(f"Exception was caught while all PRs deleting")
         print(e)
         print()
 
 def main():
     init()
     args_read()
+
+    if CURRENT_MODE == ProcessingMode.CLOSE_PRS:
+        close_all_prs(PR_START_NAME)
+        return
 
     if CURRENT_MODE == ProcessingMode.DELETE_BRANCHES_PRS or CURRENT_MODE == ProcessingMode.DELETE_PRS:
         # Must be done before branches removing
