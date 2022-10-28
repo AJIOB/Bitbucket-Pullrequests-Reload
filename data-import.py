@@ -362,20 +362,22 @@ def upload_prs(data):
         # Create branches
         for pr in prs:
             try:
+                print("Creating branches for PR", pr.id)
+
                 srcCommit = pr.srcCommit
                 try:
-                    get_commit_info(srcCommit)
-                except requests.exceptions.HTTPError as e:
+                    res = get_commit_info(srcCommit)
+
+                    # force rechecking for empty commits
+                    res = json.loads(res)
+                    commitId = res["id"]
+                except Exception as e:
                     # Commit not found, using merge commit
                     srcCommit = pr.mergeCommit
 
-                try:
-                    get_commit_info(srcCommit)
-                except requests.exceptions.HTTPError as e:
-                    # Commit not found, using none commit (next code will generate lots of exceptions)
-                    srcCommit = None
+                    print("Using merge commit instead of src (second not presented in subtree)")
 
-                print("Creating branches for PR", pr.id)
+                # If merge commit is not presented, we will see that next in create part
 
                 create_branch(formatBranchName(pr.id, SRC_BRANCH_PREFIX, pr.srcBranch), srcCommit)
                 create_branch(formatBranchName(pr.id, DST_BRANCH_PREFIX, pr.dstBranch), pr.dstCommit)
