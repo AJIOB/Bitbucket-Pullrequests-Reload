@@ -220,6 +220,35 @@ def delete_pr(id, version):
     res.raise_for_status()
     return res.text
 
+def create_pr_file_comment(prId, text, filePath, lineNum, fileType="TO"):
+    payload = {
+        "text": text,
+        "anchor": {
+            "line": lineNum,
+            "lineType": "CONTEXT",
+            "fileType": fileType,
+            "path": filePath,
+        },
+    }
+
+    res = requests.post(formatTemplate(URL_CREATE_PR_COMMENT, prId=prId), auth=AUTH, headers=POST_HEADERS, json=payload)
+    res.raise_for_status()
+    return res.text
+
+def create_pr_comment(prId, text, parentCommit=None):
+    payload = {
+        "text": text,
+    }
+
+    if parentCommit:
+        payload["parent"] = {
+            "id": parentCommit,
+        }
+
+    res = requests.post(formatTemplate(URL_CREATE_PR_COMMENT, prId=prId), auth=AUTH, headers=POST_HEADERS, json=payload)
+    res.raise_for_status()
+    return res.text
+
 def get_commit_info(commitToRead):
     res = requests.get(formatTemplate(URL_GET_COMMIT, commitId = commitToRead), auth=AUTH)
     res.raise_for_status()
@@ -362,20 +391,88 @@ def upload_prs(data):
 
 # Returns True if base PR comment exists, else False
 def form_single_pr_comment(currComment, newCommentIds, prInfo, diffs={}):
-    # TODO: implement
+    # Receiving PR info
+    if not currComment.prId in prInfo:
+        print("Old PR", currComment.prId, "was not created. Comment", currComment.id, "cannot be created too")
+        return True
+    newPr = prInfo[currComment.prId]
+
+    parent = None
+    if currComment.parentCommentId:
+        if not currComment.parentCommentId in newCommentIds:
+            return False
+
+        parent = newCommentIds[currComment.parentCommentId]
+
+    textParts = [
+        f"Created by _{currComment.user}_ for commit {currComment.commit}",
+    ]
+
+    if currComment.isDeleted:
+        print(f"Comment {currComment.id} for original PR {currComment.prId} was deleted")
+        textParts.append("Message was previously deleted")
+        textParts.append("")
+
+    lineNum = None
+    if currComment.file != '':
+        if currComment.fromLine != '':
+            lineType = 'FROM'
+            lineTypeText = 'Source'
+            lineNum = currComment.fromLine
+        else:
+            lineType = 'TO'
+            lineTypeText = 'Current'
+            lineNum = currComment.toLine
+
+        textParts.append(f"Source file '{currComment.file}'")
+        textParts.append(f"{lineTypeText} commit line {lineNum}")
+        textParts.append("")
+
+        if currComment.diffUrl:
+            if currComment.diffUrl in diffs:
+                textParts.append("Original diff:")
+                textParts.append("```diff")
+                textParts.append(diffs[currComment.diffUrl])
+                textParts.append("```")
+            else:
+                textParts.append(f"Original diff with URL {currComment.diffUrl} was lost")
+            textParts.append("")
+
+    textParts.append(f"Original message:")
+    textParts.append(currComment.body)
+
+    # merge parts to single text
+    text = '\n'.join(textParts)
 
     try:
         print("Uploading comment", currComment.id, "for original PR", currComment.prId)
 
-        # TODO: real uploading
+        if parent != None:
+            res = create_pr_comment(newPr.id, text, parent)
+        else:
+            if currComment.file:
+                try:
+                    # Trying to create file with bitbucket diff, not our
+                    res = create_pr_file_comment(newPr.id, text, currComment.file, lineNum, lineType)
+                except Exception as e:
+                    print(f"Creating file comment {currComment.id} from PR {currComment.prId} as usual file")
+
+            # file comment was not created or that is usual comment
+            if not res:
+                res = create_pr_comment(newPr.id, text)
+
+        print("Comment", currComment.id, "for original PR", currComment.prId, "was uploaded")
+
+        res = json.loads(res)
+        newCommentIds[currComment.id] = res["id"]
 
     except requests.exceptions.HTTPError as e:
-        print(f"HTTP Exception was caught for PR {pr.prId} comment {currComment.id} creation")
+        print(f"HTTP Exception was caught for PR {currComment.prId} comment {currComment.id} creation")
         print(f"HTTP code {e.response.status_code}")
         print(e.response.text)
         print()
     except Exception as e:
-        print(f"Exception was caught for PR {pr.prId} comment {currComment.id} creation")
+        print(f"Exception was caught for PR {currComment.prId} comment {currComment.id} creation")
         print(e)
         print()
 
