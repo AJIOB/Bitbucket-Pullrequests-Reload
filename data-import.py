@@ -184,13 +184,13 @@ def args_read():
         elif mode == '-debug':
             CURRENT_MODE = ProcessingMode.DEBUG
         elif mode.endswith('.json'):
-            with open(mode, "r") as f:
+            with open(mode, "r", encoding="utf8") as f:
                 global JSON_ADDITIONAL_INFO
                 JSON_ADDITIONAL_INFO = json.load(f)
 
 def read_file(path):
     rows = []
-    with open(path) as src:
+    with open(path, "r", encoding="utf8") as src:
         inReader = csv.reader(src)
 
         for row in inReader:
