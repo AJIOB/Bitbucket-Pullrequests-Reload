@@ -34,7 +34,6 @@
 #### - PR comments uses that info in format key:value, where key = diff URL (usually bitbucket API), value = downloaded diff info from that URL
 
 import aiohttp
-import aiohttp.web as web
 import asyncio
 import csv
 from enum import Enum
@@ -217,6 +216,23 @@ def formatBranchName(id, prefix, originalName):
     # https://jira.atlassian.com/browse/BSERV-10433
     return res[:100]
 
+async def response_process(res):
+    # Force waiting message, as described here:
+    # https://stackoverflow.com/a/56446507/6818663
+    text = await res.text()
+
+    res.raise_for_status()
+
+    try:
+        res.raise_for_status()
+        pass
+    except aiohttp.ClientResponseError as e:
+        print(text)
+        # Force fill message field & rethrow exception
+        raise aiohttp.ClientResponseError(e.request_info, e.history, status=e.status, headers=e.headers, message=text)
+
+    return text
+
 async def create_pr(session, title, description = None, srcBranch = "prTest1", dstBranch = "stage"):
     payload = {
         "title": title,
@@ -231,9 +247,8 @@ async def create_pr(session, title, description = None, srcBranch = "prTest1", d
         ]
     }
 
-    res = await session.post(formatTemplate(URL_CREATE_PR), auth=AUTH, headers=POST_HEADERS, json=payload, raise_for_status=True)
-
-    return await res.text()
+    async with session.post(formatTemplate(URL_CREATE_PR), auth=AUTH, headers=POST_HEADERS, json=payload) as resp:
+        return await response_process(resp)
 
 async def list_prs(session, start=0, state="OPEN"):
     payload = {
@@ -241,27 +256,27 @@ async def list_prs(session, start=0, state="OPEN"):
         "state": state,
     }
 
-    res = await session.get(formatTemplate(URL_CREATE_PR), auth=AUTH, params=payload, raise_for_status=True)
+    async with session.get(formatTemplate(URL_CREATE_PR), auth=AUTH, params=payload) as resp:
+        return await response_process(resp)
 
-    return await res.text()
-
-async def close_pr(session, id, version):
+async def close_pr(session, id, version, comment=None):
     payload = {
         "version": version,
     }
 
-    res = await session.post(formatTemplate(URL_CLOSE_PR, prId=id), auth=AUTH, headers=POST_HEADERS, params=payload, raise_for_status=True)
+    if comment:
+        payload["comment"] = comment
 
-    return await res.text()
+    async with session.post(formatTemplate(URL_CLOSE_PR, prId=id), auth=AUTH, headers=POST_HEADERS, json=payload) as resp:
+        return await response_process(resp)
 
 async def delete_pr(session, id, version):
     payload = {
         "version": version,
     }
 
-    res = await session.delete(formatTemplate(URL_DELETE_PR, prId=id), auth=AUTH, headers=POST_HEADERS, json=payload, raise_for_status=True)
-
-    return await res.text()
+    async with session.delete(formatTemplate(URL_DELETE_PR, prId=id), auth=AUTH, headers=POST_HEADERS, json=payload) as resp:
+        return await response_process(resp)
 
 async def create_pr_file_comment(session, prId, text, filePath, lineNum, fileType="TO", lineType="CONTEXT", fromHash=None, toHash=None, diffType="RANGE"):
     payload = {
@@ -279,9 +294,8 @@ async def create_pr_file_comment(session, prId, text, filePath, lineNum, fileTyp
         payload["anchor"]["toHash"] = toHash
         payload["anchor"]["diffType"] = diffType
 
-    res = await session.post(formatTemplate(URL_CREATE_PR_COMMENT, prId=prId), auth=AUTH, headers=POST_HEADERS, json=payload, raise_for_status=True)
-
-    return await res.text()
+    async with session.post(formatTemplate(URL_CREATE_PR_COMMENT, prId=prId), auth=AUTH, headers=POST_HEADERS, json=payload) as resp:
+        return await response_process(resp)
 
 async def create_pr_comment(session, prId, text, parentCommit=None):
     payload = {
@@ -293,14 +307,12 @@ async def create_pr_comment(session, prId, text, parentCommit=None):
             "id": parentCommit,
         }
 
-    res = await session.post(formatTemplate(URL_CREATE_PR_COMMENT, prId=prId), auth=AUTH, headers=POST_HEADERS, json=payload, raise_for_status=True)
-
-    return await res.text()
+    async with session.post(formatTemplate(URL_CREATE_PR_COMMENT, prId=prId), auth=AUTH, headers=POST_HEADERS, json=payload) as resp:
+        return await response_process(resp)
 
 async def get_commit_info(session, commitToRead):
-    res = await session.get(formatTemplate(URL_GET_COMMIT, commitId = commitToRead), auth=AUTH, raise_for_status=True)
-
-    return await res.text()
+    async with session.get(formatTemplate(URL_GET_COMMIT, commitId = commitToRead), auth=AUTH) as resp:
+        return await response_process(resp)
 
 async def create_branch(session, name, commit):
     payload = {
@@ -308,9 +320,8 @@ async def create_branch(session, name, commit):
         "startPoint": commit,
     }
 
-    res = await session.post(formatTemplate(URL_CREATE_BRANCH), auth=AUTH, headers=POST_HEADERS, json=payload, raise_for_status=True)
-
-    return await res.text()
+    async with session.post(formatTemplate(URL_CREATE_BRANCH), auth=AUTH, headers=POST_HEADERS, json=payload) as resp:
+        return await response_process(resp)
 
 async def list_branches(session, filterText=None, start=0):
     payload = {
@@ -320,9 +331,8 @@ async def list_branches(session, filterText=None, start=0):
     if filterText != None:
         payload["filterText"] = filterText
 
-    res = await session.get(formatTemplate(URL_CREATE_BRANCH), auth=AUTH, params=payload, raise_for_status=True)
-
-    return await res.text()
+    async with session.get(formatTemplate(URL_CREATE_BRANCH), auth=AUTH, params=payload) as resp:
+        return await response_process(resp)
 
 async def delete_branch(session, id, dryRun=False):
     payload = {
@@ -330,9 +340,8 @@ async def delete_branch(session, id, dryRun=False):
         "dryRun": dryRun,
     }
 
-    res = await session.delete(formatTemplate(URL_DELETE_BRANCH, prId=id), auth=AUTH, headers=POST_HEADERS, json=payload, raise_for_status=True)
-
-    return await res.text()
+    async with session.delete(formatTemplate(URL_DELETE_BRANCH, prId=id), auth=AUTH, headers=POST_HEADERS, json=payload) as resp:
+        return await response_process(resp)
 
 async def upload_prs(session, data):
     headers = data[0]
@@ -394,10 +403,10 @@ async def create_branches_for_pr(session, pr):
 
         await create_branch(session, formatBranchName(pr.id, SRC_BRANCH_PREFIX, pr.srcBranch), srcCommit)
         await create_branch(session, formatBranchName(pr.id, DST_BRANCH_PREFIX, pr.dstBranch), pr.dstCommit)
-    except web.HTTPError as e:
+    except aiohttp.ClientResponseError as e:
         print(f"HTTP Exception was caught for PR {pr.id} branch creation")
-        print(f"HTTP code {e.response.status_code}")
-        print(e.response.text)
+        print(f"HTTP code {e.status}")
+        print(e.message)
         print()
     except Exception as e:
         print(f"Exception was caught for PR {pr.id} branch creation")
@@ -435,10 +444,10 @@ async def upload_single_pr(session, pr):
         print("Creating PR", pr.id)
 
         await create_pr(session, newTitle, newDescription, formatBranchName(pr.id, SRC_BRANCH_PREFIX, pr.srcBranch), formatBranchName(pr.id, DST_BRANCH_PREFIX, pr.dstBranch))
-    except web.HTTPError as e:
+    except aiohttp.ClientResponseError as e:
         print(f"HTTP Exception was caught for PR {pr.id} PR creation")
-        print(f"HTTP code {e.response.status_code}")
-        print(e.response.text)
+        print(f"HTTP code {e.status}")
+        print(e.message)
         print()
     except Exception as e:
         print(f"Exception was caught for PR {pr.id} PR creation")
@@ -544,8 +553,8 @@ async def form_single_pr_comment(session, currComment, newCommentIds, prInfo, di
                 try:
                     # Trying to create file with bitbucket diff, not our
                     res = await create_pr_file_comment(session, newPr.id, text, currComment.file, lineNum, fileType, lineType)
-                except web.HTTPError as e:
-                    print(f"Creating file comment {currComment.id} from PR {currComment.prId} as usual file. HTTP error {e.response.status_code}, message {e.response.text}")
+                except aiohttp.ClientResponseError as e:
+                    print(f"Creating file comment {currComment.id} from PR {currComment.prId} as usual file. HTTP error {e.status}, message {e.message}")
                 except Exception as e:
                     print(f"Creating file comment {currComment.id} from PR {currComment.prId} as usual file. Error message {e}")
 
@@ -556,10 +565,10 @@ async def form_single_pr_comment(session, currComment, newCommentIds, prInfo, di
         res = json.loads(res)
         newCommentIds[currComment.id] = res["id"]
 
-    except web.HTTPError as e:
+    except aiohttp.ClientResponseError as e:
         print(f"HTTP Exception was caught for PR {currComment.prId} comment {currComment.id} creation")
-        print(f"HTTP code {e.response.status_code}")
-        print(e.response.text)
+        print(f"HTTP code {e.status}")
+        print(e.message)
         print()
     except Exception as e:
         print(f"Exception was caught for PR {currComment.prId} comment {currComment.id} creation")
@@ -629,10 +638,10 @@ async def upload_pr_comments(session, data):
                 break
 
             pagingOffset = res["nextPageStart"]
-        except web.HTTPError as e:
+        except aiohttp.ClientResponseError as e:
             print(f"HTTP Exception was caught while loading PR info (pagination offset {pagingOffset})")
-            print(f"HTTP code {e.response.status_code}")
-            print(e.response.text)
+            print(f"HTTP code {e.status}")
+            print(e.message)
             print()
         except Exception as e:
             print(f"Exception was caught while loading PR info (pagination offset {pagingOffset})")
@@ -685,10 +694,10 @@ async def delete_all_branches(session, filterText=None):
 
             if res["isLastPage"]:
                 break
-    except web.HTTPError as e:
+    except aiohttp.ClientResponseError as e:
         print(f"HTTP Exception was caught while all branches deleting")
-        print(f"HTTP code {e.response.status_code}")
-        print(e.response.text)
+        print(f"HTTP code {e.status}")
+        print(e.message)
         print()
     except Exception as e:
         print(f"Exception was caught while all branches deleting")
@@ -719,17 +728,17 @@ async def close_all_prs(session, filterTitle=None):
                     continue
 
                 print("Closing PR", prId, "version", prVersion, "with title", prTitle)
-                tasks.append(close_pr(session, prId, prVersion))
+                tasks.append(close_pr(session, prId, prVersion, "Imported pull request"))
 
             # Wait all tasks for that iteration
             await asyncio.gather(*tasks)
 
             if res["isLastPage"]:
                 break
-    except web.HTTPError as e:
+    except aiohttp.ClientResponseError as e:
         print(f"HTTP Exception was caught while all PRs closing")
-        print(f"HTTP code {e.response.status_code}")
-        print(e.response.text)
+        print(f"HTTP code {e.status}")
+        print(e.message)
         print()
     except Exception as e:
         print(f"Exception was caught while all PRs closing")
@@ -765,10 +774,10 @@ async def delete_all_prs(session, filterTitle=None, state="OPEN"):
 
             if res["isLastPage"]:
                 break
-    except web.HTTPError as e:
+    except aiohttp.ClientResponseError as e:
         print(f"HTTP Exception was caught while all PRs deleting")
-        print(f"HTTP code {e.response.status_code}")
-        print(e.response.text)
+        print(f"HTTP code {e.status}")
+        print(e.message)
         print()
     except Exception as e:
         print(f"Exception was caught while all PRs deleting")
