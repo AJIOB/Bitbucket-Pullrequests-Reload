@@ -46,6 +46,8 @@ DST_BRANCH_PREFIX = 'dst'
 # Used by creation & filtering too, uses '[' for generating more specific output
 PR_START_NAME = "[Bitbucket Import"
 BRANCH_START_NAME = "bitbucket/"
+# May be set to None for enable default limit 25
+DEFAULT_PAGE_RECORDS_LIMIT = 2000
 
 class ProcessingMode(Enum):
     LOAD_INFO = 1
@@ -256,6 +258,9 @@ async def list_prs(session, start=0, state="OPEN"):
         "state": state,
     }
 
+    if DEFAULT_PAGE_RECORDS_LIMIT:
+        payload["limit"] = DEFAULT_PAGE_RECORDS_LIMIT
+
     async with session.get(formatTemplate(URL_CREATE_PR), auth=AUTH, params=payload) as resp:
         return await response_process(resp)
 
@@ -330,6 +335,9 @@ async def list_branches(session, filterText=None, start=0):
 
     if filterText != None:
         payload["filterText"] = filterText
+
+    if DEFAULT_PAGE_RECORDS_LIMIT:
+        payload["limit"] = DEFAULT_PAGE_RECORDS_LIMIT
 
     async with session.get(formatTemplate(URL_CREATE_BRANCH), auth=AUTH, params=payload) as resp:
         return await response_process(resp)
