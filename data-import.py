@@ -98,8 +98,14 @@ class PullRequestShort:
         self.version = version
 
 def init():
-    # see https://stackoverflow.com/a/15063941/6818663
-    csv.field_size_limit(sys.maxsize)
+    try:
+        # see https://stackoverflow.com/a/15063941/6818663
+        csv.field_size_limit(sys.maxsize)
+    except OverflowError:
+        maxLong = (1 << 31) - 1
+
+        # Looks like Windows uses long instead of long long
+        csv.field_size_limit(maxLong)
 
     # Init global templates
     # Almost all from https://docs.atlassian.com/bitbucket-server/rest/5.16.0/bitbucket-rest.html
@@ -178,13 +184,13 @@ def args_read():
         elif mode == '-debug':
             CURRENT_MODE = ProcessingMode.DEBUG
         elif mode.endswith('.json'):
-            with open(mode, "r") as f:
+            with open(mode, "r", encoding="utf8") as f:
                 global JSON_ADDITIONAL_INFO
                 JSON_ADDITIONAL_INFO = json.load(f)
 
 def read_file(path):
     rows = []
-    with open(path) as src:
+    with open(path, "r", encoding="utf8") as src:
         inReader = csv.reader(src)
 
         for row in inReader:
