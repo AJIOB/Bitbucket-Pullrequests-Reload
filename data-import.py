@@ -334,7 +334,7 @@ async def delete_branch(session, id, dryRun=False):
 
     return await res.text()
 
-def upload_prs(data):
+async def upload_prs(session, data):
     headers = data[0]
 
     prs = []
@@ -368,78 +368,82 @@ def upload_prs(data):
 
     if CURRENT_MODE != ProcessingMode.LOAD_INFO_ONLY_PRS:
         # Create branches
-        for pr in prs:
-            try:
-                print("Creating branches for PR", pr.id)
-
-                srcCommit = pr.srcCommit
-                try:
-                    res = get_commit_info(srcCommit)
-
-                    # force rechecking for empty commits
-                    res = json.loads(res)
-                    commitId = res["id"]
-                except Exception as e:
-                    # Commit not found, using merge commit
-                    srcCommit = pr.mergeCommit
-
-                    print("Using merge commit instead of src (second not presented in subtree)")
-
-                # If merge commit is not presented, we will see that next in create part
-
-                create_branch(formatBranchName(pr.id, SRC_BRANCH_PREFIX, pr.srcBranch), srcCommit)
-                create_branch(formatBranchName(pr.id, DST_BRANCH_PREFIX, pr.dstBranch), pr.dstCommit)
-            except web.HTTPError as e:
-                print(f"HTTP Exception was caught for PR {pr.id} branch creation")
-                print(f"HTTP code {e.response.status_code}")
-                print(e.response.text)
-                print()
-            except Exception as e:
-                print(f"Exception was caught for PR {pr.id} branch creation")
-                print(e)
-                print()
+        await asyncio.gather(*[create_branches_for_pr(session, pr) for pr in prs])
 
     # Create pull requests
-    for pr in prs:
+    await asyncio.gather(*[upload_single_pr(session, pr) for pr in prs])
+
+async def create_branches_for_pr(session, pr):
+    try:
+        print("Creating branches for PR", pr.id)
+
+        srcCommit = pr.srcCommit
         try:
-            # First number in title must be original PR number
-            # for correct comments uploading
-            newTitle = f"{PR_START_NAME} {pr.id}, {pr.state}] {pr.title}"
-            descriptionParts = [
-                f"_Created by {pr.user}_",
-                f"_Closed by {pr.closedBy}_",
-                f"",
-                f"Source commit (from) {pr.srcCommit} (branch ***{srcBranch}***)",
-                f"Destination commit (to) {pr.dstCommit} (branch ***{dstBranch}***)",
-                f"",
-            ]
+            res = await get_commit_info(session, srcCommit)
 
-            if pr.declineReason != '':
-                descriptionParts.append("Decline message:")
-                descriptionParts.append(pr.declineReason)
-                descriptionParts.append('')
-
-            if pr.mergeCommit != '':
-                descriptionParts.append(f"Merged to commit {pr.mergeCommit}")
-                descriptionParts.append('')
-
-            descriptionParts.append("Original description:")
-            descriptionParts.append(pr_all_process_body(pr))
-
-            newDescription = '\n'.join(descriptionParts)
-
-            print("Creating PR", pr.id)
-
-            create_pr(newTitle, newDescription, formatBranchName(pr.id, SRC_BRANCH_PREFIX, pr.srcBranch), formatBranchName(pr.id, DST_BRANCH_PREFIX, pr.dstBranch))
-        except web.HTTPError as e:
-            print(f"HTTP Exception was caught for PR {pr.id} PR creation")
-            print(f"HTTP code {e.response.status_code}")
-            print(e.response.text)
-            print()
+            # force rechecking for empty commits
+            res = json.loads(res)
+            commitId = res["id"]
         except Exception as e:
-            print(f"Exception was caught for PR {pr.id} PR creation")
-            print(e)
-            print()
+            # Commit not found, using merge commit
+            srcCommit = pr.mergeCommit
+
+            print("Using merge commit instead of src (second not presented in subtree), PR", pr.id)
+
+        # If merge commit is not presented, we will see that next in create part
+
+        await create_branch(session, formatBranchName(pr.id, SRC_BRANCH_PREFIX, pr.srcBranch), srcCommit)
+        await create_branch(session, formatBranchName(pr.id, DST_BRANCH_PREFIX, pr.dstBranch), pr.dstCommit)
+    except web.HTTPError as e:
+        print(f"HTTP Exception was caught for PR {pr.id} branch creation")
+        print(f"HTTP code {e.response.status_code}")
+        print(e.response.text)
+        print()
+    except Exception as e:
+        print(f"Exception was caught for PR {pr.id} branch creation")
+        print(e)
+        print()
+
+async def upload_single_pr(session, pr):
+    try:
+        # First number in title must be original PR number
+        # for correct comments uploading
+        newTitle = f"{PR_START_NAME} {pr.id}, {pr.state}] {pr.title}"
+        descriptionParts = [
+            f"_Created by {pr.user}_",
+            f"_Closed by {pr.closedBy}_",
+            f"",
+            f"Source commit (from) {pr.srcCommit} (branch ***{pr.srcBranch}***)",
+            f"Destination commit (to) {pr.dstCommit} (branch ***{pr.dstBranch}***)",
+            f"",
+        ]
+
+        if pr.declineReason != '':
+            descriptionParts.append("Decline message:")
+            descriptionParts.append(pr.declineReason)
+            descriptionParts.append('')
+
+        if pr.mergeCommit != '':
+            descriptionParts.append(f"Merged to commit {pr.mergeCommit}")
+            descriptionParts.append('')
+
+        descriptionParts.append("Original description:")
+        descriptionParts.append(pr_all_process_body(pr))
+
+        newDescription = '\n'.join(descriptionParts)
+
+        print("Creating PR", pr.id)
+
+        await create_pr(session, newTitle, newDescription, formatBranchName(pr.id, SRC_BRANCH_PREFIX, pr.srcBranch), formatBranchName(pr.id, DST_BRANCH_PREFIX, pr.dstBranch))
+    except web.HTTPError as e:
+        print(f"HTTP Exception was caught for PR {pr.id} PR creation")
+        print(f"HTTP code {e.response.status_code}")
+        print(e.response.text)
+        print()
+    except Exception as e:
+        print(f"Exception was caught for PR {pr.id} PR creation")
+        print(e)
+        print()
 
 def pr_all_process_body(comment):
     raw = comment.body
