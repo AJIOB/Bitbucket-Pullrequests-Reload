@@ -98,8 +98,14 @@ class PullRequestShort:
         self.version = version
 
 def init():
-    # see https://stackoverflow.com/a/15063941/6818663
-    csv.field_size_limit(sys.maxsize)
+    try:
+        # see https://stackoverflow.com/a/15063941/6818663
+        csv.field_size_limit(sys.maxsize)
+    except OverflowError:
+        maxLong = (1 << 31) - 1
+
+        # Looks like Windows uses long instead of long long
+        csv.field_size_limit(maxLong)
 
     # Init global templates
     # Almost all from https://docs.atlassian.com/bitbucket-server/rest/5.16.0/bitbucket-rest.html
