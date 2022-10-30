@@ -695,7 +695,7 @@ async def delete_all_branches(session, filterText=None):
             for v in res["values"]:
                 branchId = v["id"]
                 print("Deleting", branchId)
-                tasks.append(delete_branch(session, branchId))
+                tasks.append(delete_branch_no_error(session, branchId))
 
             # Wait all tasks for that iteration
             await asyncio.gather(*tasks)
@@ -736,7 +736,7 @@ async def close_all_prs(session, filterTitle=None):
                     continue
 
                 print("Closing PR", prId, "version", prVersion, "with title", prTitle)
-                tasks.append(close_pr(session, prId, prVersion, "Imported pull request"))
+                tasks.append(close_pr_no_error(session, prId, prVersion, "Imported pull request"))
 
             # Wait all tasks for that iteration
             await asyncio.gather(*tasks)
@@ -775,7 +775,7 @@ async def delete_all_prs(session, filterTitle=None, state="OPEN"):
                     continue
 
                 print("Deleting PR", prId, "with title", prTitle)
-                tasks.append(delete_pr(session, prId, prVersion))
+                tasks.append(delete_pr_no_error(session, prId, prVersion))
 
             # Wait all tasks for that iteration
             await asyncio.gather(*tasks)
@@ -789,6 +789,45 @@ async def delete_all_prs(session, filterTitle=None, state="OPEN"):
         print()
     except Exception as e:
         print(f"Exception was caught while all PRs deleting")
+        print(e)
+        print()
+
+async def delete_branch_no_error(session, branchId):
+    try:
+        return await delete_branch(session, branchId)
+    except aiohttp.ClientResponseError as e:
+        print(f"HTTP Exception was caught while deleting branch {branchId}")
+        print(f"HTTP code {e.status}")
+        print(e.message)
+        print()
+    except Exception as e:
+        print(f"Exception was caught while deleting branch {branchId}")
+        print(e)
+        print()
+
+async def close_pr_no_error(session, id, version, comment):
+    try:
+        return await close_pr(session, id, version, comment)
+    except aiohttp.ClientResponseError as e:
+        print(f"HTTP Exception was caught while PR {id} closing")
+        print(f"HTTP code {e.status}")
+        print(e.message)
+        print()
+    except Exception as e:
+        print(f"Exception was caught while PR {id} closing")
+        print(e)
+        print()
+
+async def delete_pr_no_error(session, prId, prVersion):
+    try:
+        return await delete_pr(session, prId, prVersion)
+    except aiohttp.ClientResponseError as e:
+        print(f"HTTP Exception was caught while PR {prId} deleting")
+        print(f"HTTP code {e.status}")
+        print(e.message)
+        print()
+    except Exception as e:
+        print(f"Exception was caught while PR {prId} deleting")
         print(e)
         print()
 
