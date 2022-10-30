@@ -471,7 +471,7 @@ def pr_all_process_body(comment):
     return raw
 
 # Returns True if base PR comment exists, else False
-def form_single_pr_comment(currComment, newCommentIds, prInfo, diffs={}):
+async def form_single_pr_comment(session, currComment, newCommentIds, prInfo, diffs={}):
     # Receiving PR info
     if not currComment.prId in prInfo:
         print("Old PR", currComment.prId, "was not created. Comment", currComment.id, "cannot be created too")
@@ -538,12 +538,12 @@ def form_single_pr_comment(currComment, newCommentIds, prInfo, diffs={}):
 
         res = None
         if parent != None:
-            res = create_pr_comment(newPr.id, text, parent)
+            res = await create_pr_comment(session, newPr.id, text, parent)
         else:
             if currComment.file:
                 try:
                     # Trying to create file with bitbucket diff, not our
-                    res = create_pr_file_comment(newPr.id, text, currComment.file, lineNum, fileType, lineType)
+                    res = await create_pr_file_comment(session, newPr.id, text, currComment.file, lineNum, fileType, lineType)
                 except web.HTTPError as e:
                     print(f"Creating file comment {currComment.id} from PR {currComment.prId} as usual file. HTTP error {e.response.status_code}, message {e.response.text}")
                 except Exception as e:
@@ -551,7 +551,7 @@ def form_single_pr_comment(currComment, newCommentIds, prInfo, diffs={}):
 
             # file comment was not created or that is usual comment
             if not res:
-                res = create_pr_comment(newPr.id, text)
+                res = await create_pr_comment(session, newPr.id, text)
 
         res = json.loads(res)
         newCommentIds[currComment.id] = res["id"]
@@ -568,7 +568,7 @@ def form_single_pr_comment(currComment, newCommentIds, prInfo, diffs={}):
 
     return True
 
-def upload_pr_comments(data):
+async def upload_pr_comments(session, data):
     headers = data[0]
 
     comments = []
@@ -605,7 +605,7 @@ def upload_pr_comments(data):
         try:
             print(f"Loading PR info with paging offset {pagingOffset}")
 
-            res = list_prs(pagingOffset, "ALL")
+            res = await list_prs(session, pagingOffset, "ALL")
             res = json.loads(res)
 
             for v in res["values"]:
@@ -642,24 +642,22 @@ def upload_pr_comments(data):
     # key will be old comment id, value will be new comment id
     newCommentIds = {}
 
-    commentsToCheckAgain = []
-
-    for c in comments:
-        if not form_single_pr_comment(c, newCommentIds, prInfo, JSON_ADDITIONAL_INFO):
-            commentsToCheckAgain.append(c)
+    commentsToCheckAgain = comments
 
     prevCommentNumber = 0
-
-    print(len(commentsToCheckAgain), "comments will be checked for loading again")
 
     # Block for infinite loop
     while prevCommentNumber != len(commentsToCheckAgain):
         prevCommentNumber = len(commentsToCheckAgain)
+        print(prevCommentNumber, "comments will be checked for loading")
 
+        loadResults = await asyncio.gather(*[form_single_pr_comment(session, c, newCommentIds, prInfo, JSON_ADDITIONAL_INFO) for c in commentsToCheckAgain])
+
+        # check what wasn't uploaded
         newCommentsToCheckAgain = []
-        for c in commentsToCheckAgain:
-            if not form_single_pr_comment(c, newCommentIds, prInfo, JSON_ADDITIONAL_INFO):
-                newCommentsToCheckAgain.append(c)
+        for i in range(prevCommentNumber):
+            if not loadResults[i]:
+                newCommentsToCheckAgain.append(commentsToCheckAgain[i])
 
         # save prev iteration as current
         commentsToCheckAgain = newCommentsToCheckAgain
