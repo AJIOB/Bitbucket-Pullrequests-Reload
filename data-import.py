@@ -695,15 +695,17 @@ async def delete_all_branches(session, filterText=None):
         print(e)
         print()
 
-def close_all_prs(filterTitle=None):
+async def close_all_prs(session, filterTitle=None):
     state="OPEN"
 
     try:
         start = 0
 
         while True:
-            res = list_prs(start, state)
+            res = await list_prs(session, start, state)
             res = json.loads(res)
+
+            tasks = []
 
             for v in res["values"]:
                 prId = v["id"]
@@ -716,8 +718,11 @@ def close_all_prs(filterTitle=None):
 
                     continue
 
-                print("Closing PR", prId, "with title", prTitle)
-                close_pr(prId, prVersion)
+                print("Closing PR", prId, "version", prVersion, "with title", prTitle)
+                tasks.append(close_pr(session, prId, prVersion))
+
+            # Wait all tasks for that iteration
+            await asyncio.gather(*tasks)
 
             if res["isLastPage"]:
                 break
