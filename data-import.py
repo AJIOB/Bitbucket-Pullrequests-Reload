@@ -399,7 +399,7 @@ async def upload_prs(session, data):
         mergeCommit = d[headers.index('MergeCommit')]
         closedBy = d[headers.index('ClosedBy')]
 
-        if repo != REPO:
+        if repo.lower() != REPO:
             # Block creating another PRs
             continue
 
@@ -640,7 +640,7 @@ async def upload_pr_comments(session, data):
         parentComment = d[headers.index('ParentID')]
         commit = d[headers.index('CommitHash')]
 
-        if repo != REPO:
+        if repo.lower() != REPO:
             # Block creating another PRs
             continue
 
