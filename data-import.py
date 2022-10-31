@@ -54,7 +54,7 @@ HTTP_EXIT_CODES = [
     401,
 ]
 # Limit number of simultaneous requests. With big number we will have lots of miss-generated 500 errors
-LIMIT_NUMBER_SIMULTANEOUS_REQUESTS = 100
+LIMIT_NUMBER_SIMULTANEOUS_REQUESTS = 25
 LIMIT_NUMBER_SIMULTANEOUS_REQUESTS_BRANCH_DELETE = 10
 
 class ProcessingMode(Enum):
