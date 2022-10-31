@@ -17,7 +17,8 @@ import time
 BITBUCKET_RATE_LIMIT = 970
 BITBUCKET_RATE_LIMIT_INTERVAL_SECONDS = 3600 + 60
 
-API_PREFIX = "https://api.bitbucket.org/2.0/"
+API_PREFIX = "https://bitbucket.org/2.0/repo"
+API_SUFFIX = ".png"
 PATTER_REPLACE_VALUE = "XXX"
 
 def init():
@@ -65,7 +66,7 @@ def load_csv_data():
     return res
 
 def select_only_urls(data):
-    res = [d for d in data if d.startswith(API_PREFIX)]
+    res = [d for d in data if d.startswith(API_PREFIX) and d.endswith(API_SUFFIX)]
 
     # need only unique urls
     res = set(res)
