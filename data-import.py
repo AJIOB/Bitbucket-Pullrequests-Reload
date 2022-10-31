@@ -56,6 +56,9 @@ HTTP_EXIT_CODES = [
 # Limit number of simultaneous requests. With big number we will have lots of miss-generated 500 errors
 LIMIT_NUMBER_SIMULTANEOUS_REQUESTS = 25
 LIMIT_NUMBER_SIMULTANEOUS_REQUESTS_BRANCH_DELETE = 10
+# True => print attached diffs
+# False => don't diffs as attaches
+PRINT_ATTACHED_DIFFS = False
 
 class ProcessingMode(Enum):
     LOAD_INFO = 1
@@ -567,12 +570,13 @@ async def form_single_pr_comment(session, currComment, newCommentIds, prInfo, di
         if currComment.diffUrl:
             if not parent:
                 if currComment.diffUrl in diffs:
-                    textParts.append("Original diff:")
-                    textParts.append("```diff")
-                    textParts.append(diffs[currComment.diffUrl])
-                    textParts.append("```")
+                    if PRINT_ATTACHED_DIFFS:
+                        textParts.append("Original diff:")
+                        textParts.append("```diff")
+                        textParts.append(diffs[currComment.diffUrl])
+                        textParts.append("```")
                 else:
-                    textParts.append(f"Original diff with URL {currComment.diffUrl} was lost")
+                    textParts.append(f"This comment is for an outdated diff")
 
     # merge parts to single text
     text = '\n'.join(textParts)
