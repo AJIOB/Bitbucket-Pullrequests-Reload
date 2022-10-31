@@ -48,6 +48,11 @@ PR_START_NAME = "[Bitbucket Import"
 BRANCH_START_NAME = "bitbucket/"
 # May be set to None for enable default limit 25
 DEFAULT_PAGE_RECORDS_LIMIT = 2000
+# Exit if it was found
+HTTP_EXIT_CODES = [
+    # HTTP 401 Unauthorized error code
+    401,
+]
 
 class ProcessingMode(Enum):
     LOAD_INFO = 1
@@ -413,6 +418,8 @@ async def create_branches_for_pr(session, pr):
         print(f"HTTP code {e.status}")
         print(e.message)
         print()
+        if e.status in HTTP_EXIT_CODES:
+            exit(e.status)
     except Exception as e:
         print(f"Exception was caught for PR {pr.id} branch creation")
         print(e)
@@ -454,6 +461,8 @@ async def upload_single_pr(session, pr):
         print(f"HTTP code {e.status}")
         print(e.message)
         print()
+        if e.status in HTTP_EXIT_CODES:
+            exit(e.status)
     except Exception as e:
         print(f"Exception was caught for PR {pr.id} PR creation")
         print(e)
@@ -575,6 +584,8 @@ async def form_single_pr_comment(session, currComment, newCommentIds, prInfo, di
         print(f"HTTP code {e.status}")
         print(e.message)
         print()
+        if e.status in HTTP_EXIT_CODES:
+            exit(e.status)
     except Exception as e:
         print(f"Exception was caught for PR {currComment.prId} comment {currComment.id} creation")
         print(e)
@@ -648,6 +659,8 @@ async def upload_pr_comments(session, data):
             print(f"HTTP code {e.status}")
             print(e.message)
             print()
+            if e.status in HTTP_EXIT_CODES:
+                exit(e.status)
         except Exception as e:
             print(f"Exception was caught while loading PR info (pagination offset {pagingOffset})")
             print(e)
@@ -704,6 +717,8 @@ async def delete_all_branches(session, filterText=None):
         print(f"HTTP code {e.status}")
         print(e.message)
         print()
+        if e.status in HTTP_EXIT_CODES:
+            exit(e.status)
     except Exception as e:
         print(f"Exception was caught while all branches deleting")
         print(e)
@@ -745,6 +760,8 @@ async def close_all_prs(session, filterTitle=None):
         print(f"HTTP code {e.status}")
         print(e.message)
         print()
+        if e.status in HTTP_EXIT_CODES:
+            exit(e.status)
     except Exception as e:
         print(f"Exception was caught while all PRs closing")
         print(e)
@@ -784,6 +801,8 @@ async def delete_all_prs(session, filterTitle=None, state="OPEN"):
         print(f"HTTP code {e.status}")
         print(e.message)
         print()
+        if e.status in HTTP_EXIT_CODES:
+            exit(e.status)
     except Exception as e:
         print(f"Exception was caught while all PRs deleting")
         print(e)
@@ -797,6 +816,8 @@ async def delete_branch_no_error(session, branchId):
         print(f"HTTP code {e.status}")
         print(e.message)
         print()
+        if e.status in HTTP_EXIT_CODES:
+            exit(e.status)
     except Exception as e:
         print(f"Exception was caught while deleting branch {branchId}")
         print(e)
@@ -810,6 +831,8 @@ async def close_pr_no_error(session, id, version, comment):
         print(f"HTTP code {e.status}")
         print(e.message)
         print()
+        if e.status in HTTP_EXIT_CODES:
+            exit(e.status)
     except Exception as e:
         print(f"Exception was caught while PR {id} closing")
         print(e)
@@ -823,6 +846,8 @@ async def delete_pr_no_error(session, prId, prVersion):
         print(f"HTTP code {e.status}")
         print(e.message)
         print()
+        if e.status in HTTP_EXIT_CODES:
+            exit(e.status)
     except Exception as e:
         print(f"Exception was caught while PR {prId} deleting")
         print(e)
