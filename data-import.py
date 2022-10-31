@@ -223,13 +223,10 @@ async def response_process(res):
     # https://stackoverflow.com/a/56446507/6818663
     text = await res.text()
 
-    res.raise_for_status()
-
     try:
         res.raise_for_status()
         pass
     except aiohttp.ClientResponseError as e:
-        print(text)
         # Force fill message field & rethrow exception
         raise aiohttp.ClientResponseError(e.request_info, e.history, status=e.status, headers=e.headers, message=text)
 
