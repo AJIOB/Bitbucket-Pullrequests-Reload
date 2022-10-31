@@ -411,8 +411,8 @@ def upload_prs(data):
                 f"_Created by {pr.user}_",
                 f"_Closed by {pr.closedBy}_",
                 f"",
-                f"Source commit (from) {pr.srcCommit} (branch ***{srcBranch}***)",
-                f"Destination commit (to) {pr.dstCommit} (branch ***{dstBranch}***)",
+                f"Source commit (from) {pr.srcCommit} (branch ***{pr.srcBranch}***)",
+                f"Destination commit (to) {pr.dstCommit} (branch ***{pr.dstBranch}***)",
                 f"",
             ]
 
