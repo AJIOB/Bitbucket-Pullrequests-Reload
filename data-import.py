@@ -95,7 +95,7 @@ class PullRequest:
         self.closedBy = closedBy
 
 class PRComment:
-    def __init__(self, repo, prNumber, user, currType, currId, body, bodyHtml, isDeleted, toLine, fromLine, file, diffUrl, parentComment, commit):
+    def __init__(self, repo, prNumber, user, currType, currId, body, bodyHtml, createdAt, isDeleted, toLine, fromLine, file, diffUrl, parentComment, commit):
         self.repo = repo
         self.prId = prNumber
         self.user = user
@@ -103,6 +103,7 @@ class PRComment:
         self.id = currId
         self.body = body
         self.bodyHtml = bodyHtml
+        self.createdAt = createdAt
         self.isDeleted = isDeleted
         self.toLine = toLine
         self.fromLine = fromLine
@@ -493,12 +494,12 @@ async def upload_single_pr(session, pr):
         ]
 
         if pr.state != OPENED_PR_STATE:
-            desc = f"_Closed by {pr.closedBy}"
+            desc = f"_Closed by **{pr.closedBy}**"
             closeInfo = append_timestamp_string_if_possible(desc, pr.closedAt, errorDescription=f"Bad PR {pr.id} closing date:") + "_"
 
             descriptionParts.insert(0, closeInfo)
 
-        desc = f"_Created by {pr.user}"
+        desc = f"_Created by **{pr.user}**"
         createInfo = append_timestamp_string_if_possible(desc, pr.createdAt, errorDescription=f"Bad PR {pr.id} creation date:") + "_"
         descriptionParts.insert(0, createInfo)
 
@@ -572,7 +573,7 @@ async def form_single_pr_comment(session, currComment, newCommentIds, prInfo, di
         parent = newCommentIds[currComment.parentCommentId]
 
     textParts = [
-        f"Created by _{currComment.user}_ for commit {currComment.commit}",
+        append_timestamp_string_if_possible(f"Created by _{currComment.user}_ for commit {currComment.commit}", currComment.createdAt, errorDescription=f"Bad PR {currComment.prId} comment {currComment.id} creation date:"),
     ]
 
     if currComment.isDeleted == 'true':
@@ -671,6 +672,7 @@ async def upload_pr_comments(session, data):
         currId = d[headers.index('CommentID')]
         body = d[headers.index('BodyRaw')]
         bodyHtml = d[headers.index('BodyHTML')]
+        createdAt = d[headers.index('CreatedAt')]
         isDeleted = d[headers.index('IsDeleted')]
         toLine = d[headers.index('ToLine')]
         fromLine = d[headers.index('FromLine')]
@@ -683,7 +685,7 @@ async def upload_pr_comments(session, data):
             # Block creating another PRs
             continue
 
-        comment = PRComment(repo, prNumber, user, currType, currId, body, bodyHtml, isDeleted, toLine, fromLine, file, diffUrl, parentComment, commit)
+        comment = PRComment(repo, prNumber, user, currType, currId, body, bodyHtml, createdAt, isDeleted, toLine, fromLine, file, diffUrl, parentComment, commit)
         comments.append(comment)
 
     prInfo = {}
