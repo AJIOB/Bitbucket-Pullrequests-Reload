@@ -7,6 +7,7 @@
 import csv
 from datetime import datetime
 import json
+import re
 import requests
 from requests.auth import HTTPBasicAuth
 import sys
@@ -17,7 +18,7 @@ import time
 BITBUCKET_RATE_LIMIT = 970
 BITBUCKET_RATE_LIMIT_INTERVAL_SECONDS = 3600 + 60
 
-API_PREFIX = "https://bitbucket.org/2.0/repo"
+API_PREFIX = "https://bitbucket.org/"
 API_SUFFIX = ".png"
 PATTER_REPLACE_VALUE = "XXX"
 
@@ -66,7 +67,16 @@ def load_csv_data():
     return res
 
 def select_only_urls(data):
-    res = [d for d in data if d.startswith(API_PREFIX) and d.endswith(API_SUFFIX)]
+    urls = []
+
+    for d in data:
+        # URL match regex from https://uibakery.io/regex-library/url-regex-python
+        matches = re.findall(r'https?:\/\/(?:www\.)?[-a-zA-Z0-9@:%._\+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b(?:[-a-zA-Z0-9()@:%_\+.~#?&\/=]*)', d)
+
+        for m in matches:
+            urls.append(m)
+
+    res = [d for d in urls if d.startswith(API_PREFIX) and d.endswith(API_SUFFIX)]
 
     # need only unique urls
     res = set(res)
