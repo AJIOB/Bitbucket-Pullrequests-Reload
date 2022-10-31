@@ -53,6 +53,9 @@ HTTP_EXIT_CODES = [
     # HTTP 401 Unauthorized error code
     401,
 ]
+# Limit number of simultaneous requests. With big number we will have lots of miss-generated 500 errors
+LIMIT_NUMBER_SIMULTANEOUS_REQUESTS = 100
+LIMIT_NUMBER_SIMULTANEOUS_REQUESTS_BRANCH_DELETE = 10
 
 class ProcessingMode(Enum):
     LOAD_INFO = 1
@@ -141,6 +144,12 @@ def init():
     # From https://confluence.atlassian.com/cloudkb/xsrf-check-failed-when-calling-cloud-apis-826874382.html
     global POST_HEADERS
     POST_HEADERS = {"X-Atlassian-Token": "no-check"}
+
+    global MULTITHREAD_LIMIT
+    MULTITHREAD_LIMIT = asyncio.Semaphore(LIMIT_NUMBER_SIMULTANEOUS_REQUESTS)
+
+    global MULTITHREAD_LIMIT_BRANCH_DELETE
+    MULTITHREAD_LIMIT_BRANCH_DELETE = asyncio.Semaphore(LIMIT_NUMBER_SIMULTANEOUS_REQUESTS_BRANCH_DELETE)
 
 def args_read():
     global SRC_FILE
@@ -251,8 +260,9 @@ async def create_pr(session, title, description = None, srcBranch = "prTest1", d
         ]
     }
 
-    async with session.post(formatTemplate(URL_CREATE_PR), auth=AUTH, headers=POST_HEADERS, json=payload) as resp:
-        return await response_process(resp)
+    async with MULTITHREAD_LIMIT:
+        async with session.post(formatTemplate(URL_CREATE_PR), auth=AUTH, headers=POST_HEADERS, json=payload) as resp:
+            return await response_process(resp)
 
 async def list_prs(session, start=0, state="OPEN"):
     payload = {
@@ -263,8 +273,9 @@ async def list_prs(session, start=0, state="OPEN"):
     if DEFAULT_PAGE_RECORDS_LIMIT:
         payload["limit"] = DEFAULT_PAGE_RECORDS_LIMIT
 
-    async with session.get(formatTemplate(URL_CREATE_PR), auth=AUTH, params=payload) as resp:
-        return await response_process(resp)
+    async with MULTITHREAD_LIMIT:
+        async with session.get(formatTemplate(URL_CREATE_PR), auth=AUTH, params=payload) as resp:
+            return await response_process(resp)
 
 async def close_pr(session, id, version, comment=None):
     payload = {
@@ -274,16 +285,18 @@ async def close_pr(session, id, version, comment=None):
     if comment:
         payload["comment"] = comment
 
-    async with session.post(formatTemplate(URL_CLOSE_PR, prId=id), auth=AUTH, headers=POST_HEADERS, json=payload) as resp:
-        return await response_process(resp)
+    async with MULTITHREAD_LIMIT:
+        async with session.post(formatTemplate(URL_CLOSE_PR, prId=id), auth=AUTH, headers=POST_HEADERS, json=payload) as resp:
+            return await response_process(resp)
 
 async def delete_pr(session, id, version):
     payload = {
         "version": version,
     }
 
-    async with session.delete(formatTemplate(URL_DELETE_PR, prId=id), auth=AUTH, headers=POST_HEADERS, json=payload) as resp:
-        return await response_process(resp)
+    async with MULTITHREAD_LIMIT:
+        async with session.delete(formatTemplate(URL_DELETE_PR, prId=id), auth=AUTH, headers=POST_HEADERS, json=payload) as resp:
+            return await response_process(resp)
 
 async def create_pr_file_comment(session, prId, text, filePath, lineNum, fileType="TO", lineType="CONTEXT", fromHash=None, toHash=None, diffType="RANGE"):
     payload = {
@@ -301,8 +314,9 @@ async def create_pr_file_comment(session, prId, text, filePath, lineNum, fileTyp
         payload["anchor"]["toHash"] = toHash
         payload["anchor"]["diffType"] = diffType
 
-    async with session.post(formatTemplate(URL_CREATE_PR_COMMENT, prId=prId), auth=AUTH, headers=POST_HEADERS, json=payload) as resp:
-        return await response_process(resp)
+    async with MULTITHREAD_LIMIT:
+        async with session.post(formatTemplate(URL_CREATE_PR_COMMENT, prId=prId), auth=AUTH, headers=POST_HEADERS, json=payload) as resp:
+            return await response_process(resp)
 
 async def create_pr_comment(session, prId, text, parentCommit=None):
     payload = {
@@ -314,12 +328,14 @@ async def create_pr_comment(session, prId, text, parentCommit=None):
             "id": parentCommit,
         }
 
-    async with session.post(formatTemplate(URL_CREATE_PR_COMMENT, prId=prId), auth=AUTH, headers=POST_HEADERS, json=payload) as resp:
-        return await response_process(resp)
+    async with MULTITHREAD_LIMIT:
+        async with session.post(formatTemplate(URL_CREATE_PR_COMMENT, prId=prId), auth=AUTH, headers=POST_HEADERS, json=payload) as resp:
+            return await response_process(resp)
 
 async def get_commit_info(session, commitToRead):
-    async with session.get(formatTemplate(URL_GET_COMMIT, commitId = commitToRead), auth=AUTH) as resp:
-        return await response_process(resp)
+    async with MULTITHREAD_LIMIT:
+        async with session.get(formatTemplate(URL_GET_COMMIT, commitId = commitToRead), auth=AUTH) as resp:
+            return await response_process(resp)
 
 async def create_branch(session, name, commit):
     payload = {
@@ -327,8 +343,9 @@ async def create_branch(session, name, commit):
         "startPoint": commit,
     }
 
-    async with session.post(formatTemplate(URL_CREATE_BRANCH), auth=AUTH, headers=POST_HEADERS, json=payload) as resp:
-        return await response_process(resp)
+    async with MULTITHREAD_LIMIT:
+        async with session.post(formatTemplate(URL_CREATE_BRANCH), auth=AUTH, headers=POST_HEADERS, json=payload) as resp:
+            return await response_process(resp)
 
 async def list_branches(session, filterText=None, start=0):
     payload = {
@@ -341,8 +358,9 @@ async def list_branches(session, filterText=None, start=0):
     if DEFAULT_PAGE_RECORDS_LIMIT:
         payload["limit"] = DEFAULT_PAGE_RECORDS_LIMIT
 
-    async with session.get(formatTemplate(URL_CREATE_BRANCH), auth=AUTH, params=payload) as resp:
-        return await response_process(resp)
+    async with MULTITHREAD_LIMIT:
+        async with session.get(formatTemplate(URL_CREATE_BRANCH), auth=AUTH, params=payload) as resp:
+            return await response_process(resp)
 
 async def delete_branch(session, id, dryRun=False):
     payload = {
@@ -350,8 +368,11 @@ async def delete_branch(session, id, dryRun=False):
         "dryRun": dryRun,
     }
 
-    async with session.delete(formatTemplate(URL_DELETE_BRANCH, prId=id), auth=AUTH, headers=POST_HEADERS, json=payload) as resp:
-        return await response_process(resp)
+    # Force blocking multithread deleting, because git almost not support concurrency on bitbucket backend
+    async with MULTITHREAD_LIMIT_BRANCH_DELETE:
+        async with MULTITHREAD_LIMIT:
+            async with session.delete(formatTemplate(URL_DELETE_BRANCH, prId=id), auth=AUTH, headers=POST_HEADERS, json=payload) as resp:
+                return await response_process(resp)
 
 async def upload_prs(session, data):
     headers = data[0]
