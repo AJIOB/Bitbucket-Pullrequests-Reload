@@ -919,5 +919,11 @@ async def main_select_mode(session):
         print("Unknown source file format")
 
 if __name__ == '__main__':
-    loop = asyncio.get_event_loop()
-    loop.run_until_complete(main())
+    # force set event loop for execution on python 3.10+
+    # Based on https://stackoverflow.com/a/73367187/6818663
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        pass
