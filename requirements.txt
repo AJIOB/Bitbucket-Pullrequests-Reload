@@ -1,0 +1,4 @@
+aiohttp
+requests
+selenium>=4.3
+tzdata

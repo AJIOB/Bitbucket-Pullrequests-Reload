@@ -21,8 +21,14 @@ API_PREFIX = "https://api.bitbucket.org/2.0/"
 PATTER_REPLACE_VALUE = "XXX"
 
 def init():
-    # see https://stackoverflow.com/a/15063941/6818663
-    csv.field_size_limit(sys.maxsize)
+    try:
+        # see https://stackoverflow.com/a/15063941/6818663
+        csv.field_size_limit(sys.maxsize)
+    except OverflowError:
+        maxLong = (1 << 31) - 1
+
+        # Looks like Windows uses long instead of long long
+        csv.field_size_limit(maxLong)
 
 def parse_args():
     USER_PASS = sys.argv[1]
@@ -49,7 +55,7 @@ def load_csv_data():
     res = []
 
     for f in SRC_FILES:
-        with open(f) as src:
+        with open(f, "r", encoding="utf8") as src:
             inReader = csv.reader(src)
 
             for row in inReader:
@@ -97,7 +103,7 @@ def load_data_from_urls_with_backup(urls):
             # temp saving
             jsonTxt = json.dumps(res)
             resFileName = DST_FILE.replace(PATTER_REPLACE_VALUE, str(step))
-            with open(resFileName, "w") as f:
+            with open(resFileName, "w", encoding="utf8") as f:
                 f.write(jsonTxt)
 
             print("File", resFileName, "was written")
@@ -111,7 +117,7 @@ def load_data_from_urls_with_backup(urls):
     # saving full results
     jsonTxt = json.dumps(res)
     resFileName = DST_FILE.replace(PATTER_REPLACE_VALUE, 'final')
-    with open(resFileName, "w") as f:
+    with open(resFileName, "w", encoding="utf8") as f:
         f.write(jsonTxt)
 
     print("Final file", resFileName, "was written")

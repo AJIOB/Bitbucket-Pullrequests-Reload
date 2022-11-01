@@ -40,7 +40,10 @@ from enum import Enum
 import json
 import re
 import sys
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
+OPENED_PR_STATE = "OPEN"
 SRC_BRANCH_PREFIX = 'src'
 DST_BRANCH_PREFIX = 'dst'
 # Used by creation & filtering too, uses '[' for generating more specific output
@@ -56,6 +59,10 @@ HTTP_EXIT_CODES = [
 # Limit number of simultaneous requests. With big number we will have lots of miss-generated 500 errors
 LIMIT_NUMBER_SIMULTANEOUS_REQUESTS = 25
 LIMIT_NUMBER_SIMULTANEOUS_REQUESTS_BRANCH_DELETE = 10
+# True => print attached diffs
+# False => don't diffs as attaches
+PRINT_ATTACHED_DIFFS = False
+TARGET_COMMENTS_TIMEZONE = ZoneInfo("Europe/Moscow")
 
 class ProcessingMode(Enum):
     LOAD_INFO = 1
@@ -70,11 +77,13 @@ CURRENT_MODE = ProcessingMode.LOAD_INFO
 JSON_ADDITIONAL_INFO = {}
 
 class PullRequest:
-    def __init__(self, id, user, title, state, body, bodyHtml, srcCommit, dstCommit, srcBranch, dstBranch, declineReason, mergeCommit, closedBy):
+    def __init__(self, id, user, title, state, createdAt, closedAt, body, bodyHtml, srcCommit, dstCommit, srcBranch, dstBranch, declineReason, mergeCommit, closedBy):
         self.id = id
         self.user = user
         self.title = title
         self.state = state
+        self.createdAt = createdAt
+        self.closedAt = closedAt
         self.body = body
         self.bodyHtml = bodyHtml
         self.srcCommit = srcCommit
@@ -86,7 +95,7 @@ class PullRequest:
         self.closedBy = closedBy
 
 class PRComment:
-    def __init__(self, repo, prNumber, user, currType, currId, body, bodyHtml, isDeleted, toLine, fromLine, file, diffUrl, parentComment, commit):
+    def __init__(self, repo, prNumber, user, currType, currId, body, bodyHtml, createdAt, isDeleted, toLine, fromLine, file, diffUrl, parentComment, commit):
         self.repo = repo
         self.prId = prNumber
         self.user = user
@@ -94,6 +103,7 @@ class PRComment:
         self.id = currId
         self.body = body
         self.bodyHtml = bodyHtml
+        self.createdAt = createdAt
         self.isDeleted = isDeleted
         self.toLine = toLine
         self.fromLine = fromLine
@@ -232,6 +242,28 @@ def formatBranchName(id, prefix, originalName):
     # https://jira.atlassian.com/browse/BSERV-10433
     return res[:100]
 
+def append_timestamp_string_if_possible(text, textUtcSeconds, targetTimeZone=TARGET_COMMENTS_TIMEZONE, errorDescription=None):
+    try:
+        dt = datetime.utcfromtimestamp(int(textUtcSeconds))
+    except Exception as e:
+        if errorDescription:
+            print(errorDescription)
+        print(e)
+        print()
+
+        return text
+
+    try:
+        dt = dt.replace(tzinfo=targetTimeZone)
+    except Exception as e:
+        print("Bad user-provided time-zone")
+        print(e)
+        print()
+
+        return text
+
+    return f"{text} at {dt.isoformat()}"
+
 async def response_process(res):
     # Force waiting message, as described here:
     # https://stackoverflow.com/a/56446507/6818663
@@ -264,7 +296,7 @@ async def create_pr(session, title, description = None, srcBranch = "prTest1", d
         async with session.post(formatTemplate(URL_CREATE_PR), auth=AUTH, headers=POST_HEADERS, json=payload) as resp:
             return await response_process(resp)
 
-async def list_prs(session, start=0, state="OPEN"):
+async def list_prs(session, start=0, state=OPENED_PR_STATE):
     payload = {
         "start": start,
         "state": state,
@@ -386,6 +418,8 @@ async def upload_prs(session, data):
         user = d[headers.index('User')]
         title = d[headers.index('Title')]
         state = d[headers.index('State')]
+        createdAt = d[headers.index('CreatedAt')]
+        closedAt = d[headers.index('UpdatedAt')]
         body = d[headers.index('BodyRaw')]
         bodyHtml = d[headers.index('BodyHTML')]
         src = d[headers.index('SourceCommit')]
@@ -396,11 +430,11 @@ async def upload_prs(session, data):
         mergeCommit = d[headers.index('MergeCommit')]
         closedBy = d[headers.index('ClosedBy')]
 
-        if repo != REPO:
+        if repo.lower() != REPO:
             # Block creating another PRs
             continue
 
-        pr = PullRequest(number, user, title, state, body, bodyHtml, src, dst, srcBranch, dstBranch, declineReason, mergeCommit, closedBy)
+        pr = PullRequest(number, user, title, state, createdAt, closedAt, body, bodyHtml, src, dst, srcBranch, dstBranch, declineReason, mergeCommit, closedBy)
         prs.append(pr)
 
     # Should create old PRs at the beginning
@@ -451,14 +485,23 @@ async def upload_single_pr(session, pr):
         # First number in title must be original PR number
         # for correct comments uploading
         newTitle = f"{PR_START_NAME} {pr.id}, {pr.state}] {pr.title}"
+
         descriptionParts = [
-            f"_Created by {pr.user}_",
-            f"_Closed by {pr.closedBy}_",
             f"",
             f"Source commit (from) {pr.srcCommit} (branch ***{pr.srcBranch}***)",
             f"Destination commit (to) {pr.dstCommit} (branch ***{pr.dstBranch}***)",
             f"",
         ]
+
+        if pr.state != OPENED_PR_STATE:
+            desc = f"_Closed by **{pr.closedBy}**"
+            closeInfo = append_timestamp_string_if_possible(desc, pr.closedAt, errorDescription=f"Bad PR {pr.id} closing date:") + "_"
+
+            descriptionParts.insert(0, closeInfo)
+
+        desc = f"_Created by **{pr.user}**"
+        createInfo = append_timestamp_string_if_possible(desc, pr.createdAt, errorDescription=f"Bad PR {pr.id} creation date:") + "_"
+        descriptionParts.insert(0, createInfo)
 
         if pr.declineReason != '':
             descriptionParts.append("Decline message:")
@@ -530,7 +573,7 @@ async def form_single_pr_comment(session, currComment, newCommentIds, prInfo, di
         parent = newCommentIds[currComment.parentCommentId]
 
     textParts = [
-        f"Created by _{currComment.user}_ for commit {currComment.commit}",
+        append_timestamp_string_if_possible(f"_Created by **{currComment.user}** for commit {currComment.commit}", currComment.createdAt, errorDescription=f"Bad PR {currComment.prId} comment {currComment.id} creation date:") + '_',
     ]
 
     if currComment.isDeleted == 'true':
@@ -567,12 +610,13 @@ async def form_single_pr_comment(session, currComment, newCommentIds, prInfo, di
         if currComment.diffUrl:
             if not parent:
                 if currComment.diffUrl in diffs:
-                    textParts.append("Original diff:")
-                    textParts.append("```diff")
-                    textParts.append(diffs[currComment.diffUrl])
-                    textParts.append("```")
+                    if PRINT_ATTACHED_DIFFS:
+                        textParts.append("Original diff:")
+                        textParts.append("```diff")
+                        textParts.append(diffs[currComment.diffUrl])
+                        textParts.append("```")
                 else:
-                    textParts.append(f"Original diff with URL {currComment.diffUrl} was lost")
+                    textParts.append(f"This comment is for an outdated diff")
 
     # merge parts to single text
     text = '\n'.join(textParts)
@@ -628,6 +672,7 @@ async def upload_pr_comments(session, data):
         currId = d[headers.index('CommentID')]
         body = d[headers.index('BodyRaw')]
         bodyHtml = d[headers.index('BodyHTML')]
+        createdAt = d[headers.index('CreatedAt')]
         isDeleted = d[headers.index('IsDeleted')]
         toLine = d[headers.index('ToLine')]
         fromLine = d[headers.index('FromLine')]
@@ -636,11 +681,11 @@ async def upload_pr_comments(session, data):
         parentComment = d[headers.index('ParentID')]
         commit = d[headers.index('CommitHash')]
 
-        if repo != REPO:
+        if repo.lower() != REPO:
             # Block creating another PRs
             continue
 
-        comment = PRComment(repo, prNumber, user, currType, currId, body, bodyHtml, isDeleted, toLine, fromLine, file, diffUrl, parentComment, commit)
+        comment = PRComment(repo, prNumber, user, currType, currId, body, bodyHtml, createdAt, isDeleted, toLine, fromLine, file, diffUrl, parentComment, commit)
         comments.append(comment)
 
     prInfo = {}
@@ -746,7 +791,7 @@ async def delete_all_branches(session, filterText=None):
         print()
 
 async def close_all_prs(session, filterTitle=None):
-    state="OPEN"
+    state=OPENED_PR_STATE
 
     try:
         start = 0
@@ -788,7 +833,7 @@ async def close_all_prs(session, filterTitle=None):
         print(e)
         print()
 
-async def delete_all_prs(session, filterTitle=None, state="OPEN"):
+async def delete_all_prs(session, filterTitle=None, state=OPENED_PR_STATE):
     try:
         start = 0
 
