@@ -32,7 +32,13 @@
 ### -dBranches = delete all created branches (keep PRs)
 ### -cPRs = close (decline) all created PRs
 ### -dPRs = delete all created PRs (keep branches)
-## $6 = (optional) source server url. Default value is bitbucket cloud URL
+## $6 = (optional) source server url/team name. Default value is bitbucket cloud URL without any team name.
+##    Values
+##      'https://server.bitbucket.my/with/relative/path/projectName'
+##      'https://server.bitbucket.my/with/relative/path/projectName/'
+##    will be decoded as:
+##      * "https://server.bitbucket.my/with/relative/path/" = old server name
+##      * "projectName" = project name (!= repo name)
 ## $7..$x = (optional) additional args
 ### any_filename.json = json file will additional info:
 #### - PR comments uses that info in format key:value, where key = diff URL (usually bitbucket API), value = downloaded diff info from that URL
@@ -190,11 +196,17 @@ def args_read(argv):
         SERVER += '/'
 
     global SERVER_API_VERSION
+    global SERVER_PROJECTS_SUBSTRING
+    global SERVER_REPOS_SUBSTRING
     # 1 for custom bitbucket server/datacenter, 2 for cloud
     if 'bitbucket.org' in SERVER:
         SERVER_API_VERSION = 2
+        SERVER_PROJECTS_SUBSTRING = ''
+        SERVER_REPOS_SUBSTRING = ''
     else:
         SERVER_API_VERSION = 1
+        SERVER_PROJECTS_SUBSTRING = 'projects/'
+        SERVER_REPOS_SUBSTRING = 'repos/'
 
     SERVER_API_VERSION = f"{SERVER_API_VERSION}.0"
 
@@ -237,11 +249,25 @@ def args_read(argv):
 
     global SOURCE_SERVER_ABSOLUTE_URL_PREFIX
     SOURCE_SERVER_ABSOLUTE_URL_PREFIX = "https://bitbucket.org/"
+    global OLD_PROJECT_NAME
+    OLD_PROJECT_NAME = None
     if len(argv) > 6:
         if re.fullmatch(URLS_REGEX, argv[6]):
-            SOURCE_SERVER_ABSOLUTE_URL_PREFIX = argv[6]
-            if not SOURCE_SERVER_ABSOLUTE_URL_PREFIX.endswith('/'):
-                SOURCE_SERVER_ABSOLUTE_URL_PREFIX += '/'
+            prefix = argv[6]
+            if not prefix.endswith('/'):
+                prefix += '/'
+
+            oldPrjName = OLD_PROJECT_NAME
+
+            delim = prefix.rfind('/', 0, -1)
+            if delim > 0:
+                # no need end /
+                oldPrjName = prefix[(delim + 1):-1].lower()
+                # need end /
+                prefix = prefix[:(delim + 1)]
+
+            SOURCE_SERVER_ABSOLUTE_URL_PREFIX = prefix
+            OLD_PROJECT_NAME = oldPrjName
 
     global JSON_ADDITIONAL_INFO
     JSON_ADDITIONAL_INFO = {}
@@ -624,16 +650,16 @@ async def pr_all_process_body(session, prOrComment):
             matches[i] = m[:-1]
 
     matches = set(matches)
-    for m in matches:
-        if not m.startswith(SOURCE_SERVER_ABSOLUTE_URL_PREFIX):
-            print(f"Unsupported URL '{m}' was detected for for PR/PR comment {prOrComment.id}. Skipping it")
+    for url in matches:
+        if not url.startswith(SOURCE_SERVER_ABSOLUTE_URL_PREFIX):
+            print(f"Unsupported URL '{url}' was detected for for PR/PR comment {prOrComment.id}. Skipping it")
             continue
 
-        if m.endswith(SOURCE_SERVER_IMAGES_SUFFIX):
+        if url.endswith(SOURCE_SERVER_IMAGES_SUFFIX):
             # This is image, need to check
 
             # Based on name encoding on saving
-            diskFileName = unquote(m).replace(':', '_').replace('/', '_')
+            diskFileName = unquote(url).replace(':', '_').replace('/', '_')
             # IMAGES_ADDITIONAL_INFO_PATH already has last '/'
             fullDiskName = IMAGES_ADDITIONAL_INFO_PATH + diskFileName
 
@@ -643,20 +669,52 @@ async def pr_all_process_body(session, prOrComment):
 
                 newUrl = attachRes["attachments"][0]["links"]["attachment"]["href"]
 
-                raw = raw.replace(m, newUrl)
+                raw = raw.replace(url, newUrl)
             except aiohttp.ClientResponseError as e:
-                print(f"Cannot attach file from old URL '{m}'. HTTP error {e.status}, message {e.message}")
+                print(f"Cannot attach file from old URL '{url}'. HTTP error {e.status}, message {e.message}")
             except Exception as e:
-                print(f"Cannot attach file from old URL '{m}'. Error message {e}")
-        else:
-            prIdMatch = re.search(re.escape(SOURCE_SERVER_ABSOLUTE_URL_PREFIX) + r'.*/pull-requests/(\d+)', m)
-            if prIdMatch:
-                # This is PR or PR comment, should process as PR link
-                # TODO: implement
-                pass
-            else:
-                print(f"Unknown URL type '{m}' was detected for PR/PR comment {prOrComment.id}. Skipping it too")
+                print(f"Cannot attach file from old URL '{url}'. Error message {e}")
 
+            continue
+
+        prIdMatch = re.search(re.escape(SOURCE_SERVER_ABSOLUTE_URL_PREFIX) + r'.*/pull-requests/(\d+)', url)
+        if prIdMatch:
+            # This is PR or PR comment, should process as PR link
+
+            oldPrId = prIdMatch.group(1)
+
+            print("HELLO OLD PR", oldPrId, "WITH URL", url)
+            # TODO: implement
+
+            continue
+
+        # Trying to find old project name & replace it
+        # At first position must be max match paths
+        possiblePrefixes = [
+            SOURCE_SERVER_ABSOLUTE_URL_PREFIX + 'projects/' + OLD_PROJECT_NAME + 'repos/',
+            SOURCE_SERVER_ABSOLUTE_URL_PREFIX + 'projects/' + OLD_PROJECT_NAME,
+            SOURCE_SERVER_ABSOLUTE_URL_PREFIX + OLD_PROJECT_NAME,
+        ]
+
+        # Force using urlLower for case-insensitive checks
+        urlLower = url.lower()
+
+        newUrl = None
+        for p in possiblePrefixes:
+            if urlLower.startswith(p):
+                print(f"Unknown project URL type '{url}' was detected for PR/PR comment {prOrComment.id}. Force replacing with current project")
+
+                # Bitbucket server
+                newUrl = SERVER + SERVER_PROJECTS_SUBSTRING + PROJECT + SERVER_REPOS_SUBSTRING + url[len(p):]
+
+                break
+
+        if not newUrl:
+            print(f"Unknown URL type '{url}' was detected for PR/PR comment {prOrComment.id}. Force replacing with current root server")
+
+            newUrl = SERVER + url[len(SOURCE_SERVER_ABSOLUTE_URL_PREFIX):]
+
+        raw = raw.replace(url, newUrl)
 
     return raw
 
@@ -1072,6 +1130,7 @@ async def main_select_mode(session):
         print("Prj:", PROJECT)
         print("Repo:", REPO)
         print("Source server:", SOURCE_SERVER_ABSOLUTE_URL_PREFIX)
+        print("Old project name:", OLD_PROJECT_NAME)
         print("Images folder:", IMAGES_ADDITIONAL_INFO_PATH)
         print("JSON data:", JSON_ADDITIONAL_INFO)
 
@@ -1097,7 +1156,9 @@ async def main_select_mode(session):
         print("Data header was empty")
     elif data[0][-1] == 'ClosedBy':
         print("PRs were found. Uploading them")
-        return await upload_prs(session, data)
+        res = await upload_prs(session, data)
+        print(res, "PRs were not created")
+        return res
     elif data[0][-1] == 'CommitHash':
         print("PRs comments were found. Uploading them")
         await upload_pr_comments(session, data)
