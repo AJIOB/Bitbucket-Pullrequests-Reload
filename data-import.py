@@ -70,7 +70,7 @@ LIMIT_NUMBER_SIMULTANEOUS_REQUESTS_BRANCH_DELETE = 10
 # False => don't diffs as attaches
 PRINT_ATTACHED_DIFFS = False
 TARGET_COMMENTS_TIMEZONE = ZoneInfo("Europe/Moscow")
-SOURCE_SERVER_ABSOLUTE_URL_PREFIX = "https://bitbucket.org/"
+SOURCE_SERVER_ABSOLUTE_URL_PREFIX = ""
 SOURCE_SERVER_IMAGES_SUFFIX = ".png"
 
 class ProcessingMode(Enum):
@@ -222,8 +222,9 @@ def args_read(argv):
         else:
             CURRENT_MODE = ProcessingMode.LOAD_INFO
 
+    global SOURCE_SERVER_ABSOLUTE_URL_PREFIX
+    SOURCE_SERVER_ABSOLUTE_URL_PREFIX = "https://bitbucket.org/"
     if len(argv) > 6:
-        global SOURCE_SERVER_ABSOLUTE_URL_PREFIX
         if re.fullmatch(URLS_REGEX, argv[6]):
             SOURCE_SERVER_ABSOLUTE_URL_PREFIX = argv[6]
 
@@ -961,9 +962,12 @@ async def main_select_mode(session):
         print("Src:", SRC_FILE)
         print("URL:", SERVER)
         print("API:", SERVER_API_VERSION)
-        print("Auth:", AUTH.username, AUTH.password)
+        print("Auth:", AUTH.login, AUTH.password)
         print("Prj:", PROJECT)
         print("Repo:", REPO)
+        print("Source server:", SOURCE_SERVER_ABSOLUTE_URL_PREFIX)
+        print("Images folder:", IMAGES_ADDITIONAL_INFO_PATH)
+        print("JSON data:", JSON_ADDITIONAL_INFO)
 
         return
 
