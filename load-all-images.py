@@ -10,6 +10,7 @@ import json
 import re
 import requests
 from requests.auth import HTTPBasicAuth
+from selenium import webdriver
 import sys
 import time
 
@@ -21,6 +22,8 @@ BITBUCKET_RATE_LIMIT_INTERVAL_SECONDS = 3600 + 60
 API_PREFIX = "https://bitbucket.org/"
 API_SUFFIX = ".png"
 PATTER_REPLACE_VALUE = "XXX"
+
+IS_USE_SELENIUM = True
 
 def init():
     try:
@@ -47,8 +50,16 @@ def parse_args():
     for p in sys.argv[3:]:
         SRC_FILES.append(p)
 
+def single_query_selenium_get_true_url(url):
+    pass
+
 def single_query(url):
-    res = requests.get(url, auth=AUTH)
+    if IS_USE_SELENIUM:
+        url = single_query_selenium(url)
+        res = requests.get(url)
+    else:
+        res = requests.get(url, auth=AUTH)
+
     res.raise_for_status()
 
     return res.text
@@ -79,7 +90,7 @@ def select_only_urls(data):
     res = [d for d in urls if d.startswith(API_PREFIX) and d.endswith(API_SUFFIX)]
 
     # need only unique urls
-    res = set(res)
+    res = list(set(res))
     return res
 
 def load_data_from_urls_with_backup(urls):
@@ -102,6 +113,11 @@ def load_data_from_urls_with_backup(urls):
             print(f"HTTP code {e.response.status_code}")
             print(e.response.text)
             print()
+            if e.response.status_code == 401:
+                print("Cannot authorize on server. Bad credentials or no permissions or OAuth2 is required (not supported). Exiting...")
+                if not IS_USE_SELENIUM:
+                    print("Try to enable Selenium with previous authorization in Chrome")
+                exit(1)
         except Exception as e:
             print(f"Exception was caught for url '{d}'")
             print(e)
@@ -139,6 +155,10 @@ def main():
 
     data = load_csv_data()
     urls = select_only_urls(data)
+
+    # Show urls if user wants to use them externally
+    print(urls)
+
     load_data_from_urls_with_backup(urls)
 
 if __name__ == '__main__':
