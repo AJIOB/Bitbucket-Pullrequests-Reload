@@ -79,6 +79,9 @@ LIMIT_NUMBER_SIMULTANEOUS_REQUESTS_BRANCH_DELETE = 10
 # True => print attached diffs
 # False => don't diffs as attaches
 PRINT_ATTACHED_DIFFS = False
+# True => create PRs with bad PR cross-refs
+# False => don't create PRs with bad PR cross-refs
+FORCE_CREATE_PRS_WITH_BAD_CROSS_REFS = False
 TARGET_COMMENTS_TIMEZONE = ZoneInfo("Europe/Moscow")
 SOURCE_SERVER_ABSOLUTE_URL_PREFIX = ""
 SOURCE_SERVER_IMAGES_SUFFIX = ".png"
@@ -566,6 +569,7 @@ async def upload_single_pr(session, pr):
     try:
         # First number in title must be original PR number
         # for correct comments uploading
+        # & cross-references creating
         newTitle = f"{PR_START_NAME} {pr.id}, {pr.state}] {pr.title}"
 
         descriptionParts = [
@@ -677,13 +681,53 @@ async def pr_all_process_body(session, prOrComment):
 
             continue
 
-        prIdMatch = re.search(re.escape(SOURCE_SERVER_ABSOLUTE_URL_PREFIX) + r'.*/pull-requests/(\d+)', url)
+        prIdMatch = re.search(re.escape(SOURCE_SERVER_ABSOLUTE_URL_PREFIX) + r'.*/([^/]+)/pull-requests/(\d+)', url)
         if prIdMatch:
             # This is PR or PR comment, should process as PR link
+            requiredRepoName = prIdMatch.group(1)
+            oldPrId = prIdMatch.group(2)
 
-            oldPrId = prIdMatch.group(1)
+            # NOTE it's a crunch, that need lots of refactoring
+            # Searching in ANOTHER REPOSITORY
+            global REPO
+            currentRepoName = REPO
+            allPrs = []
+            try:
+                REPO = requiredRepoName
 
-            print("HELLO OLD PR", oldPrId, "WITH URL", url)
+                allPrs = await list_all_prs(session, filterTitle=PR_START_NAME)
+            except aiohttp.ClientResponseError as e:
+                print(f"Cannot receive list with new PRs for old URL '{url}'. HTTP error {e.status}, message {e.message}")
+            except Exception as e:
+                print(f"Cannot receive list with new PRs for old URL '{url}'. Error message {e}")
+            finally:
+                REPO = currentRepoName
+
+            newPrId = None
+            for v in allPrs:
+                prId = v["id"]
+                prTitle = v["title"]
+
+                # get first number, as described in PR title creation
+                numberSearch = re.search(r'\d+', prTitle)
+                if not numberSearch:
+                    continue
+
+                capturedPrId = numberSearch.group()
+                if capturedPrId == oldPrId:
+                    newPrId = prId
+                    break
+
+            if newPrId == None:
+                errorMsg = f"Cannot find new PR id for old URL '{url}'"
+                print(errorMsg)
+                if not FORCE_CREATE_PRS_WITH_BAD_CROSS_REFS:
+                    raise Exception(errorMsg)
+
+                # Set pseudo PR ID
+                newPrId = "OLD_" + oldPrId
+
+            print("HELLO OLD PR", oldPrId, "WITH URL", url, ". NEW ID IS", newPrId)
             # TODO: implement
 
             continue
