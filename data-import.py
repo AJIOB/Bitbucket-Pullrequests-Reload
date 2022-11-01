@@ -167,12 +167,12 @@ def init():
     global MULTITHREAD_LIMIT_BRANCH_DELETE
     MULTITHREAD_LIMIT_BRANCH_DELETE = asyncio.Semaphore(LIMIT_NUMBER_SIMULTANEOUS_REQUESTS_BRANCH_DELETE)
 
-def args_read():
+def args_read(argv):
     global SRC_FILE
-    SRC_FILE = sys.argv[1]
+    SRC_FILE = argv[1]
 
     global SERVER
-    SERVER = sys.argv[2]
+    SERVER = argv[2]
     if not SERVER.endswith('/'):
         SERVER += '/'
 
@@ -185,13 +185,13 @@ def args_read():
 
     SERVER_API_VERSION = f"{SERVER_API_VERSION}.0"
 
-    USER_PASS = sys.argv[3]
+    USER_PASS = argv[3]
     userPassSplit = USER_PASS.split(':')
 
     global AUTH
     AUTH = aiohttp.BasicAuth(userPassSplit[0], userPassSplit[1])
 
-    PROJECT_REPO = sys.argv[4]
+    PROJECT_REPO = argv[4]
     prjRepoSplit = PROJECT_REPO.split('/')
 
     global PROJECT
@@ -200,9 +200,9 @@ def args_read():
     PROJECT = prjRepoSplit[0].lower()
     REPO = prjRepoSplit[1].lower()
 
-    if len(sys.argv) > 5:
+    if len(argv) > 5:
         global CURRENT_MODE
-        mode = sys.argv[5]
+        mode = argv[5]
         if mode == '-dAll':
             CURRENT_MODE = ProcessingMode.DELETE_BRANCHES_PRS
         elif mode == '-dBranches':
@@ -220,10 +220,10 @@ def args_read():
                 global JSON_ADDITIONAL_INFO
                 JSON_ADDITIONAL_INFO = json.load(f)
 
-    if len(sys.argv) > 6:
+    if len(argv) > 6:
         global SOURCE_SERVER_ABSOLUTE_URL_PREFIX
-        if re.fullmatch(URLS_REGEX, sys.argv[6]):
-            SOURCE_SERVER_ABSOLUTE_URL_PREFIX = sys.argv[6]
+        if re.fullmatch(URLS_REGEX, argv[6]):
+            SOURCE_SERVER_ABSOLUTE_URL_PREFIX = argv[6]
 
 def read_file(path):
     rows = []
@@ -936,9 +936,9 @@ async def delete_pr_no_error(session, prId, prVersion):
         print(e)
         print()
 
-async def main():
+async def main(argv):
     init()
-    args_read()
+    args_read(argv)
 
     async with aiohttp.ClientSession() as session:
         await main_select_mode(session)
@@ -986,6 +986,6 @@ if __name__ == '__main__':
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     try:
-        asyncio.run(main())
+        asyncio.run(main(sys.argv))
     except KeyboardInterrupt:
         pass
