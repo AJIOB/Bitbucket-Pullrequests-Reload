@@ -16,6 +16,7 @@
 # - tested with Bitbucket Server v8.5.0 (not Bitbucket Cloud)
 # - Bitbucket app key (HTTP access token) should be used instead of real password (with repository write permissions)
 # - as told in Bitbucket REST API docs (https://docs.atlassian.com/bitbucket-server/rest/5.16.0/bitbucket-rest.html, "Personal Repositories" part), if you want to access user project instead of workspace project, you should add '~' before your username. For example, use '~alex/my-repo' for accessing 'alex' personal workspace
+# - all cross-referenced repositories should be in one new workgroup
 #
 # Args sequence:
 ## $1 = source file name (csv-formatted data from ruby)
@@ -32,6 +33,7 @@
 ### -dPRs = delete all created PRs (keep branches)
 ### any_filename.json = json file will additional info:
 #### - PR comments uses that info in format key:value, where key = diff URL (usually bitbucket API), value = downloaded diff info from that URL
+## $6 = (optional) source server url. Default value is bitbucket cloud URL
 
 import aiohttp
 import asyncio
@@ -46,6 +48,8 @@ from zoneinfo import ZoneInfo
 OPENED_PR_STATE = "OPEN"
 SRC_BRANCH_PREFIX = 'src'
 DST_BRANCH_PREFIX = 'dst'
+# URL match regex from https://uibakery.io/regex-library/url-regex-python
+URLS_REGEX = r'https?:\/\/(?:www\.)?[-a-zA-Z0-9@:%._\+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b(?:[-a-zA-Z0-9()@:%_\+.~#?&\/=]*)'
 # Used by creation & filtering too, uses '[' for generating more specific output
 PR_START_NAME = "[Bitbucket Import"
 BRANCH_START_NAME = "bitbucket/"
@@ -63,6 +67,8 @@ LIMIT_NUMBER_SIMULTANEOUS_REQUESTS_BRANCH_DELETE = 10
 # False => don't diffs as attaches
 PRINT_ATTACHED_DIFFS = False
 TARGET_COMMENTS_TIMEZONE = ZoneInfo("Europe/Moscow")
+SOURCE_SERVER_ABSOLUTE_URL_PREFIX = "https://bitbucket.org/"
+SOURCE_SERVER_IMAGES_SUFFIX = ".png"
 
 class ProcessingMode(Enum):
     LOAD_INFO = 1
@@ -213,6 +219,11 @@ def args_read():
             with open(mode, "r", encoding="utf8") as f:
                 global JSON_ADDITIONAL_INFO
                 JSON_ADDITIONAL_INFO = json.load(f)
+
+    if len(sys.argv) > 6:
+        global SOURCE_SERVER_ABSOLUTE_URL_PREFIX
+        if re.fullmatch(URLS_REGEX, sys.argv[6]):
+            SOURCE_SERVER_ABSOLUTE_URL_PREFIX = sys.argv[6]
 
 def read_file(path):
     rows = []
@@ -554,6 +565,12 @@ def pr_all_process_body(comment):
 
         # User name will be bold & italic
         raw = raw.replace(m, f"***{realUser}***")
+
+    # Processing absolute URLs for bitbucket
+    matches = re.findall(URLS_REGEX, raw)
+    matches = set(matches)
+    for m in matches:
+        pass
 
     return raw
 
