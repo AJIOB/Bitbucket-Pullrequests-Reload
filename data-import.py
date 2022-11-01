@@ -541,13 +541,13 @@ async def upload_prs(session, data):
     # Block for infinite loop
     while prevPrNumber != len(prsToCheckAgain):
         prevPrNumber = len(prsToCheckAgain)
-        print(prevPrNumber, "comments will be checked for loading")
+        print(prevPrNumber, "PRs will be checked for loading")
 
         # Uses for speed up downloading big repo PRs
         # Will be cleaned on every iteration loop for loading new self-cross-references
         prsCache = {}
 
-        loadResults = await asyncio.gather(*[upload_single_pr(session, pr, prsCache) for pr in prs])
+        loadResults = await asyncio.gather(*[form_single_pr(session, pr, prsCache) for pr in prsToCheckAgain])
 
         # check what wasn't uploaded
         newPrsToCheckAgain = []
@@ -598,7 +598,7 @@ async def create_branches_for_pr(session, pr):
         print(e)
         print()
 
-async def upload_single_pr(session, pr, prsCache={}):
+async def form_single_pr(session, pr, prsCache={}):
     try:
         # First number in title must be original PR number
         # for correct comments uploading
@@ -640,7 +640,7 @@ async def upload_single_pr(session, pr, prsCache={}):
 
         await create_pr(session, newTitle, newDescription, formatBranchName(pr.id, SRC_BRANCH_PREFIX, pr.srcBranch), formatBranchName(pr.id, DST_BRANCH_PREFIX, pr.dstBranch))
 
-        return False
+        return True
     except aiohttp.ClientResponseError as e:
         print(f"HTTP Exception was caught for PR {pr.id} PR creation")
         print(f"HTTP code {e.status}")
@@ -654,7 +654,7 @@ async def upload_single_pr(session, pr, prsCache={}):
         print()
 
     # PR was not created
-    return True
+    return False
 
 async def pr_all_process_body(session, prOrComment, prsCache={}):
     raw = prOrComment.body
@@ -1052,14 +1052,14 @@ async def list_all_prs(session, state=ANY_PR_STATE, filterTitle=None, repo=None)
 
             start = res["nextPageStart"]
     except aiohttp.ClientResponseError as e:
-        print(f"HTTP Exception was caught while all PRs closing")
+        print(f"HTTP Exception was caught while all PRs listing")
         print(f"HTTP code {e.status}")
         print(e.message)
         print()
         if e.status in HTTP_EXIT_CODES:
             exit(e.status)
     except Exception as e:
-        print(f"Exception was caught while all PRs closing")
+        print(f"Exception was caught while all PRs listing")
         print(e)
         print()
 
