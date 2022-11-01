@@ -52,6 +52,7 @@ from urllib.parse import unquote
 from zoneinfo import ZoneInfo
 
 OPENED_PR_STATE = "OPEN"
+ANY_PR_STATE = "ALL"
 SRC_BRANCH_PREFIX = 'src'
 DST_BRANCH_PREFIX = 'dst'
 # URL match regex from https://uibakery.io/regex-library/url-regex-python
@@ -793,46 +794,36 @@ async def upload_pr_comments(session, data):
     prInfo = {}
 
     # Loading PR info
-    pagingOffset = 0
-    while True:
-        try:
-            print(f"Loading PR info with paging offset {pagingOffset}")
+    try:
+        print(f"Loading PR info")
 
-            res = await list_prs(session, pagingOffset, "ALL", PR_START_NAME)
-            res = json.loads(res)
+        res = await list_all_prs(session, filterTitle=PR_START_NAME)
 
-            for v in res["values"]:
-                prId = v["id"]
-                prTitle = v["title"]
-                prVersion = v["version"]
-                if PR_START_NAME and not PR_START_NAME in prTitle:
-                    continue
+        for v in res:
+            prId = v["id"]
+            prTitle = v["title"]
+            prVersion = v["version"]
 
-                # get first number, as described in PR title creation
-                numberSearch = re.search(r'\d+', prTitle)
-                if not numberSearch:
-                    print(f"Bad PR {prId}: unsupported title: '{prTitle}'")
-                    continue
+            # get first number, as described in PR title creation
+            numberSearch = re.search(r'\d+', prTitle)
+            if not numberSearch:
+                print(f"Bad PR {prId}: unsupported title: '{prTitle}'")
+                continue
 
-                originalPrId = numberSearch.group()
+            originalPrId = numberSearch.group()
 
-                prInfo[originalPrId] = PullRequestShort(prId, prVersion)
-
-            if res["isLastPage"]:
-                break
-
-            pagingOffset = res["nextPageStart"]
-        except aiohttp.ClientResponseError as e:
-            print(f"HTTP Exception was caught while loading PR info (pagination offset {pagingOffset})")
-            print(f"HTTP code {e.status}")
-            print(e.message)
-            print()
-            if e.status in HTTP_EXIT_CODES:
-                exit(e.status)
-        except Exception as e:
-            print(f"Exception was caught while loading PR info (pagination offset {pagingOffset})")
-            print(e)
-            print()
+            prInfo[originalPrId] = PullRequestShort(prId, prVersion)
+    except aiohttp.ClientResponseError as e:
+        print(f"HTTP Exception was caught while loading PR info")
+        print(f"HTTP code {e.status}")
+        print(e.message)
+        print()
+        if e.status in HTTP_EXIT_CODES:
+            exit(e.status)
+    except Exception as e:
+        print(f"Exception was caught while loading PR info")
+        print(e)
+        print()
 
     # key will be old comment id, value will be new comment id
     newCommentIds = {}
@@ -891,6 +882,46 @@ async def delete_all_branches(session, filterText=None):
         print(f"Exception was caught while all branches deleting")
         print(e)
         print()
+
+async def list_all_prs(session, state=ANY_PR_STATE, filterTitle=None):
+    allPrs = []
+
+    try:
+        start = 0
+
+        while True:
+            res = await list_prs(session, start, state, filterTitle)
+            res = json.loads(res)
+
+            for v in res["values"]:
+                prId = v["id"]
+                prTitle = v["title"]
+                if filterTitle and not filterTitle in prTitle:
+                    start += 1
+
+                    print("Skipping PR", prId, "with title", prTitle)
+
+                    continue
+
+                allPrs.append(v)
+
+            if res["isLastPage"]:
+                break
+
+            start = res["nextPageStart"]
+    except aiohttp.ClientResponseError as e:
+        print(f"HTTP Exception was caught while all PRs closing")
+        print(f"HTTP code {e.status}")
+        print(e.message)
+        print()
+        if e.status in HTTP_EXIT_CODES:
+            exit(e.status)
+    except Exception as e:
+        print(f"Exception was caught while all PRs closing")
+        print(e)
+        print()
+
+    return allPrs
 
 async def close_all_prs(session, filterTitle=None):
     state=OPENED_PR_STATE
@@ -1052,7 +1083,7 @@ async def main_select_mode(session):
 
     if CURRENT_MODE == ProcessingMode.DELETE_BRANCHES_PRS or CURRENT_MODE == ProcessingMode.DELETE_PRS:
         # Must be done before branches removing
-        await delete_all_prs(session, PR_START_NAME, "ALL")
+        await delete_all_prs(session, PR_START_NAME, ANY_PR_STATE)
     if CURRENT_MODE == ProcessingMode.DELETE_BRANCHES or CURRENT_MODE == ProcessingMode.DELETE_BRANCHES_PRS:
         await delete_all_branches(session, BRANCH_START_NAME)
 
