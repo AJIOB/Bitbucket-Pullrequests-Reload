@@ -88,7 +88,7 @@ PRINT_ATTACHED_DIFFS = False
 FORCE_CREATE_PRS_WITH_BAD_CROSS_REFS = None
 TARGET_COMMENTS_TIMEZONE = ZoneInfo("Europe/Moscow")
 SOURCE_SERVER_ABSOLUTE_URL_PREFIX = ""
-SOURCE_SERVER_IMAGES_SUFFIX = ".png"
+SOURCE_SERVER_IMAGES_CONTAINS = "/images/"
 
 class ProcessingMode(Enum):
     LOAD_INFO = 1
@@ -726,7 +726,7 @@ async def pr_all_process_body(session, prOrComment, prsCache={}):
             print(f"Unsupported URL '{url}' was detected for for PR/PR comment {prOrComment.id}. Skipping it")
             continue
 
-        if url.endswith(SOURCE_SERVER_IMAGES_SUFFIX):
+        if SOURCE_SERVER_IMAGES_CONTAINS in url:
             # This is image, need to check
 
             # Based on name encoding on saving
@@ -738,6 +738,7 @@ async def pr_all_process_body(session, prOrComment, prsCache={}):
                 attachRes = await attach_file(session, fullDiskName)
                 attachRes = json.loads(attachRes)
 
+                # Thanks, Postman & reverse
                 newUrl = attachRes["attachments"][0]["links"]["attachment"]["href"]
 
                 raw = raw.replace(url, newUrl)
