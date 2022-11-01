@@ -26,6 +26,7 @@
 ## $4 = server project/repo combination (such as 'my-workspace/test-repo')
 ## $5 = execution mode:
 ### -uAll = load info from file to PRs with auto-detection PRs/PR comments
+### -uAllForce = '-uAll' + force creating cross refs
 ### -debug = print input variables & exit
 ### -uPRs = load info from file to PRs (not recreate branches)
 ### -dAll = delete all created branches & PRs
@@ -82,7 +83,8 @@ PRINT_ATTACHED_DIFFS = False
 # True => create PRs with bad PR cross-refs
 # False => don't create PRs with bad PR cross-refs
 # Always True for PR comments creation
-FORCE_CREATE_PRS_WITH_BAD_CROSS_REFS = False
+# Can be set from CLI
+FORCE_CREATE_PRS_WITH_BAD_CROSS_REFS = None
 TARGET_COMMENTS_TIMEZONE = ZoneInfo("Europe/Moscow")
 SOURCE_SERVER_ABSOLUTE_URL_PREFIX = ""
 SOURCE_SERVER_IMAGES_SUFFIX = ".png"
@@ -228,6 +230,9 @@ def args_read(argv):
     PROJECT = prjRepoSplit[0]
     REPO = prjRepoSplit[1].lower()
 
+    global FORCE_CREATE_PRS_WITH_BAD_CROSS_REFS
+    FORCE_CREATE_PRS_WITH_BAD_CROSS_REFS = False
+
     if len(argv) > 5:
         global CURRENT_MODE
         mode = argv[5]
@@ -235,6 +240,10 @@ def args_read(argv):
             CURRENT_MODE = ProcessingMode.DELETE_BRANCHES_PRS
         elif mode == '-uAll':
             CURRENT_MODE = ProcessingMode.LOAD_INFO
+        elif mode == '-uAllForce':
+            CURRENT_MODE = ProcessingMode.LOAD_INFO
+
+            FORCE_CREATE_PRS_WITH_BAD_CROSS_REFS = True
         elif mode == '-dBranches':
             CURRENT_MODE = ProcessingMode.DELETE_BRANCHES
         elif mode == '-dPRs':
