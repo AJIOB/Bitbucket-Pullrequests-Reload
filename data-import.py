@@ -222,7 +222,7 @@ def args_read(argv):
     global PROJECT
     global REPO
 
-    PROJECT = prjRepoSplit[0].lower()
+    PROJECT = prjRepoSplit[0]
     REPO = prjRepoSplit[1].lower()
 
     if len(argv) > 5:
@@ -262,7 +262,7 @@ def args_read(argv):
             delim = prefix.rfind('/', 0, -1)
             if delim > 0:
                 # no need end /
-                oldPrjName = prefix[(delim + 1):-1].lower()
+                oldPrjName = prefix[(delim + 1):-1]
                 # need end /
                 prefix = prefix[:(delim + 1)]
 
@@ -691,21 +691,18 @@ async def pr_all_process_body(session, prOrComment):
         # Trying to find old project name & replace it
         # At first position must be max match paths
         possiblePrefixes = [
-            SOURCE_SERVER_ABSOLUTE_URL_PREFIX + 'projects/' + OLD_PROJECT_NAME + 'repos/',
-            SOURCE_SERVER_ABSOLUTE_URL_PREFIX + 'projects/' + OLD_PROJECT_NAME,
-            SOURCE_SERVER_ABSOLUTE_URL_PREFIX + OLD_PROJECT_NAME,
+            SOURCE_SERVER_ABSOLUTE_URL_PREFIX + 'projects/' + OLD_PROJECT_NAME + '/' + 'repos/',
+            SOURCE_SERVER_ABSOLUTE_URL_PREFIX + 'projects/' + OLD_PROJECT_NAME + '/',
+            SOURCE_SERVER_ABSOLUTE_URL_PREFIX + OLD_PROJECT_NAME + '/',
         ]
-
-        # Force using urlLower for case-insensitive checks
-        urlLower = url.lower()
 
         newUrl = None
         for p in possiblePrefixes:
-            if urlLower.startswith(p):
+            if url.startswith(p):
                 print(f"Unknown project URL type '{url}' was detected for PR/PR comment {prOrComment.id}. Force replacing with current project")
 
                 # Bitbucket server
-                newUrl = SERVER + SERVER_PROJECTS_SUBSTRING + PROJECT + SERVER_REPOS_SUBSTRING + url[len(p):]
+                newUrl = SERVER + SERVER_PROJECTS_SUBSTRING + PROJECT + '/' + SERVER_REPOS_SUBSTRING + url[len(p):]
 
                 break
 
