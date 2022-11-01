@@ -81,6 +81,7 @@ LIMIT_NUMBER_SIMULTANEOUS_REQUESTS_BRANCH_DELETE = 10
 PRINT_ATTACHED_DIFFS = False
 # True => create PRs with bad PR cross-refs
 # False => don't create PRs with bad PR cross-refs
+# Always True for PR comments creation
 FORCE_CREATE_PRS_WITH_BAD_CROSS_REFS = False
 TARGET_COMMENTS_TIMEZONE = ZoneInfo("Europe/Moscow")
 SOURCE_SERVER_ABSOLUTE_URL_PREFIX = ""
@@ -293,12 +294,15 @@ def read_file(path):
 
     return rows
 
-def formatTemplate(template, prId=None, commitId=None):
+def formatTemplate(template, prId=None, commitId=None, repo=None):
+    if repo == None:
+        repo = REPO
+
     return template.format(
         endpoint=SERVER,
         version=SERVER_API_VERSION,
         projectKey=PROJECT,
-        repositorySlug=REPO,
+        repositorySlug=repo,
         pullRequestId=prId,
         commitId=commitId
     )
@@ -365,7 +369,7 @@ async def create_pr(session, title, description = None, srcBranch = "prTest1", d
         async with session.post(formatTemplate(URL_CREATE_PR), auth=AUTH, headers=POST_HEADERS, json=payload) as resp:
             return await response_process(resp)
 
-async def list_prs(session, start=0, state=OPENED_PR_STATE, filterText=None):
+async def list_prs(session, start=0, state=OPENED_PR_STATE, filterText=None, repo=None):
     payload = {
         "start": start,
         "state": state,
@@ -378,7 +382,7 @@ async def list_prs(session, start=0, state=OPENED_PR_STATE, filterText=None):
         payload["filterText"] = filterText
 
     async with MULTITHREAD_LIMIT:
-        async with session.get(formatTemplate(URL_CREATE_PR), auth=AUTH, params=payload) as resp:
+        async with session.get(formatTemplate(URL_CREATE_PR, repo=repo), auth=AUTH, params=payload) as resp:
             return await response_process(resp)
 
 async def close_pr(session, id, version, comment=None):
@@ -687,21 +691,14 @@ async def pr_all_process_body(session, prOrComment):
             requiredRepoName = prIdMatch.group(1)
             oldPrId = prIdMatch.group(2)
 
-            # NOTE it's a crunch, that need lots of refactoring
-            # Searching in ANOTHER REPOSITORY
-            global REPO
-            currentRepoName = REPO
             allPrs = []
             try:
-                REPO = requiredRepoName
-
-                allPrs = await list_all_prs(session, filterTitle=PR_START_NAME)
+                # Searching in ANOTHER REPOSITORY
+                allPrs = await list_all_prs(session, filterTitle=PR_START_NAME, repo=requiredRepoName)
             except aiohttp.ClientResponseError as e:
                 print(f"Cannot receive list with new PRs for old URL '{url}'. HTTP error {e.status}, message {e.message}")
             except Exception as e:
                 print(f"Cannot receive list with new PRs for old URL '{url}'. Error message {e}")
-            finally:
-                REPO = currentRepoName
 
             newPrId = None
             for v in allPrs:
@@ -715,20 +712,28 @@ async def pr_all_process_body(session, prOrComment):
 
                 capturedPrId = numberSearch.group()
                 if capturedPrId == oldPrId:
-                    newPrId = prId
+                    newPrId = str(prId)
                     break
 
             if newPrId == None:
                 errorMsg = f"Cannot find new PR id for old URL '{url}'"
                 print(errorMsg)
                 if not FORCE_CREATE_PRS_WITH_BAD_CROSS_REFS:
-                    raise Exception(errorMsg)
+                    try:
+                        # PR comments always force created, because they must be load after all possible PRs were created
+                        prOrComment.prId
+                    except AttributeError:
+                        # Here => this is PR, not PR comment
+                        raise Exception(errorMsg)
 
                 # Set pseudo PR ID
                 newPrId = "OLD_" + oldPrId
 
-            print("HELLO OLD PR", oldPrId, "WITH URL", url, ". NEW ID IS", newPrId)
-            # TODO: implement
+            newUrl = SERVER + SERVER_PROJECTS_SUBSTRING + PROJECT + '/' + SERVER_REPOS_SUBSTRING + requiredRepoName + '/' + 'pull-requests/' + newPrId
+
+            print("HELLO OLD PR", oldPrId, "WITH URL", url, ". NEW ID IS", newPrId, "NEW URL", newUrl)
+
+            raw = raw.replace(url, newUrl)
 
             continue
 
@@ -982,14 +987,14 @@ async def delete_all_branches(session, filterText=None):
         print(e)
         print()
 
-async def list_all_prs(session, state=ANY_PR_STATE, filterTitle=None):
+async def list_all_prs(session, state=ANY_PR_STATE, filterTitle=None, repo=None):
     allPrs = []
 
     try:
         start = 0
 
         while True:
-            res = await list_prs(session, start, state, filterTitle)
+            res = await list_prs(session, start, state, filterTitle, repo)
             res = json.loads(res)
 
             for v in res["values"]:
