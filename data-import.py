@@ -3,8 +3,8 @@
 #
 # Full restoring sequence should be:
 # 1. Using test repo with the same sources, as in original
-# 2. Restoring all PRs & branches (csv with PRs, $5 should be empty)
-# 3. Restoring all PR comments (csv with PR comments, $5 should be with JSON file or empty)
+# 2. Restoring all PRs & branches (csv with PRs, $5 should be empty, $6 should be with images path)
+# 3. Restoring all PR comments (csv with PR comments, $5 should be empty, $6 should be with images path, $7 should be with JSON file)
 # 4. Close all PRs (any csv, $5 = '-cPRs')
 # 5. Delete all created branches (any csv, $5 = '-dBranches')
 #
@@ -31,9 +31,12 @@
 ### -dBranches = delete all created branches (keep PRs)
 ### -cPRs = close (decline) all created PRs
 ### -dPRs = delete all created PRs (keep branches)
+## $6 = (optional) source server url. Default value is bitbucket cloud URL
+## $7..$x = (optional) additional args
 ### any_filename.json = json file will additional info:
 #### - PR comments uses that info in format key:value, where key = diff URL (usually bitbucket API), value = downloaded diff info from that URL
-## $6 = (optional) source server url. Default value is bitbucket cloud URL
+### any_foldername/ = folder will additional info:
+#### - PRs & PR comments uses files as mirrors for images uploading
 
 import aiohttp
 import asyncio
@@ -81,6 +84,7 @@ class ProcessingMode(Enum):
 
 CURRENT_MODE = ProcessingMode.LOAD_INFO
 JSON_ADDITIONAL_INFO = {}
+IMAGES_ADDITIONAL_INFO_PATH = None
 
 class PullRequest:
     def __init__(self, id, user, title, state, createdAt, closedAt, body, bodyHtml, srcCommit, dstCommit, srcBranch, dstBranch, declineReason, mergeCommit, closedBy):
@@ -215,15 +219,24 @@ def args_read(argv):
             CURRENT_MODE = ProcessingMode.CLOSE_PRS
         elif mode == '-debug':
             CURRENT_MODE = ProcessingMode.DEBUG
-        elif mode.endswith('.json'):
-            with open(mode, "r", encoding="utf8") as f:
-                global JSON_ADDITIONAL_INFO
-                JSON_ADDITIONAL_INFO = json.load(f)
+        else:
+            CURRENT_MODE = ProcessingMode.LOAD_INFO
 
     if len(argv) > 6:
         global SOURCE_SERVER_ABSOLUTE_URL_PREFIX
         if re.fullmatch(URLS_REGEX, argv[6]):
             SOURCE_SERVER_ABSOLUTE_URL_PREFIX = argv[6]
+
+    global JSON_ADDITIONAL_INFO
+    JSON_ADDITIONAL_INFO = {}
+    global IMAGES_ADDITIONAL_INFO_PATH
+    IMAGES_ADDITIONAL_INFO_PATH = None
+    for p in argv[7:]:
+        if p.endswith('.json'):
+            with open(p, "r", encoding="utf8") as f:
+                JSON_ADDITIONAL_INFO = json.load(f)
+        elif p.endswith('/'):
+            IMAGES_ADDITIONAL_INFO_PATH = p
 
 def read_file(path):
     rows = []
