@@ -41,11 +41,13 @@
 import aiohttp
 import asyncio
 import csv
+from datetime import datetime
 from enum import Enum
 import json
+import os
 import re
 import sys
-from datetime import datetime
+from urllib.parse import unquote
 from zoneinfo import ZoneInfo
 
 OPENED_PR_STATE = "OPEN"
@@ -84,7 +86,7 @@ class ProcessingMode(Enum):
 
 CURRENT_MODE = ProcessingMode.LOAD_INFO
 JSON_ADDITIONAL_INFO = {}
-IMAGES_ADDITIONAL_INFO_PATH = None
+IMAGES_ADDITIONAL_INFO_PATH = ''
 
 class PullRequest:
     def __init__(self, id, user, title, state, createdAt, closedAt, body, bodyHtml, srcCommit, dstCommit, srcBranch, dstBranch, declineReason, mergeCommit, closedBy):
@@ -161,6 +163,10 @@ def init():
     global URL_GET_COMMIT
     URL_GET_COMMIT = "{endpoint}rest/api/{version}/projects/{projectKey}/repos/{repositorySlug}/commits/{commitId}"
 
+    # Hand revert from UI attaching
+    global URL_ATTACH_FILE
+    URL_ATTACH_FILE = "{endpoint}projects/{projectKey}/repos/{repositorySlug}/attachments"
+
     # From https://confluence.atlassian.com/cloudkb/xsrf-check-failed-when-calling-cloud-apis-826874382.html
     global POST_HEADERS
     POST_HEADERS = {"X-Atlassian-Token": "no-check"}
@@ -227,11 +233,13 @@ def args_read(argv):
     if len(argv) > 6:
         if re.fullmatch(URLS_REGEX, argv[6]):
             SOURCE_SERVER_ABSOLUTE_URL_PREFIX = argv[6]
+            if not SOURCE_SERVER_ABSOLUTE_URL_PREFIX.endswith('/'):
+                SOURCE_SERVER_ABSOLUTE_URL_PREFIX += '/'
 
     global JSON_ADDITIONAL_INFO
     JSON_ADDITIONAL_INFO = {}
     global IMAGES_ADDITIONAL_INFO_PATH
-    IMAGES_ADDITIONAL_INFO_PATH = None
+    IMAGES_ADDITIONAL_INFO_PATH = ''
     for p in argv[7:]:
         if p.endswith('.json'):
             with open(p, "r", encoding="utf8") as f:
@@ -394,6 +402,18 @@ async def get_commit_info(session, commitToRead):
         async with session.get(formatTemplate(URL_GET_COMMIT, commitId = commitToRead), auth=AUTH) as resp:
             return await response_process(resp)
 
+async def attach_file(session, filePathToAttach):
+    fileName = os.path.basename(filePathToAttach)
+
+    with open(filePathToAttach, "rb") as f:
+        with aiohttp.MultipartWriter('form-data') as mpwriter:
+            part = mpwriter.append(f)
+            part.set_content_disposition('form-data', name='files', filename=fileName)
+
+            async with MULTITHREAD_LIMIT:
+                async with session.post(formatTemplate(URL_ATTACH_FILE), auth=AUTH, data=mpwriter) as resp:
+                    return await response_process(resp)
+
 async def create_branch(session, name, commit):
     payload = {
         "name": name,
@@ -538,7 +558,7 @@ async def upload_single_pr(session, pr):
             descriptionParts.append('')
 
         descriptionParts.append("Original description:")
-        descriptionParts.append(pr_all_process_body(pr))
+        descriptionParts.append(await pr_all_process_body(session, pr))
 
         newDescription = '\n'.join(descriptionParts)
 
@@ -557,9 +577,9 @@ async def upload_single_pr(session, pr):
         print(e)
         print()
 
-def pr_all_process_body(comment):
-    raw = comment.body
-    html = comment.bodyHtml
+async def pr_all_process_body(session, prOrComment):
+    raw = prOrComment.body
+    html = prOrComment.bodyHtml
 
     # Processing username cites
     # They are formatted in raw body as @{GUID} or @{number:GUID}
@@ -572,7 +592,7 @@ def pr_all_process_body(comment):
         # '@' not in match for removing unwanted triggers
         idSearch = re.search(re.escape(realId) + r'"[^>]*>@([^<>]*)</', html)
         if not idSearch:
-            print(f"Corrupted HTML message for object {comment.id}")
+            print(f"Corrupted HTML message for object {prOrComment.id}")
             continue
 
         realUser = idSearch.group(1)
@@ -582,9 +602,45 @@ def pr_all_process_body(comment):
 
     # Processing absolute URLs for bitbucket
     matches = re.findall(URLS_REGEX, raw)
+    for i, m in enumerate(matches):
+        if m.endswith(')'):
+            # That is regex bug
+            matches[i] = m[:-1]
+
     matches = set(matches)
     for m in matches:
-        pass
+        if not m.startswith(SOURCE_SERVER_ABSOLUTE_URL_PREFIX):
+            print(f"Unsupported URL '{m}' was detected for for PR/PR comment {prOrComment.id}. Skipping it")
+            continue
+
+        if m.endswith(SOURCE_SERVER_IMAGES_SUFFIX):
+            # This is image, need to check
+
+            # Based on name encoding on saving
+            diskFileName = unquote(m).replace(':', '_').replace('/', '_')
+            # IMAGES_ADDITIONAL_INFO_PATH already has last '/'
+            fullDiskName = IMAGES_ADDITIONAL_INFO_PATH + diskFileName
+
+            try:
+                attachRes = await attach_file(session, fullDiskName)
+                attachRes = json.loads(attachRes)
+
+                newUrl = attachRes["attachments"][0]["links"]["attachment"]["href"]
+
+                raw = raw.replace(m, newUrl)
+            except aiohttp.ClientResponseError as e:
+                print(f"Cannot attach file from old URL '{m}'. HTTP error {e.status}, message {e.message}")
+            except Exception as e:
+                print(f"Cannot attach file from old URL '{m}'. Error message {e}")
+        else:
+            prIdMatch = re.search(re.escape(SOURCE_SERVER_ABSOLUTE_URL_PREFIX) + r'.*/pull-requests/(\d+)', m)
+            if prIdMatch:
+                # This is PR or PR comment, should process as PR link
+                # TODO: implement
+                pass
+            else:
+                print(f"Unknown URL type '{m}' was detected for PR/PR comment {prOrComment.id}. Skipping it too")
+
 
     return raw
 
@@ -614,7 +670,7 @@ async def form_single_pr_comment(session, currComment, newCommentIds, prInfo, di
 
     # Printing before diff, because diff may be very long
     textParts.append(f"Original message:")
-    textParts.append(pr_all_process_body(currComment))
+    textParts.append(await pr_all_process_body(session, currComment))
     textParts.append("")
 
     lineNum = None
