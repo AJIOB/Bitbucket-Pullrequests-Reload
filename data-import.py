@@ -24,7 +24,7 @@
 ## $2 = server URL (such as 'https://bitbucket.org/')
 ## $3 = server auth info: "username:password"
 ## $4 = server project/repo combination (such as 'my-workspace/test-repo')
-## $5 = (optional) additional options:
+## $5 = execution mode:
 ### -uAll = load info from file to PRs with auto-detection PRs/PR comments
 ### -debug = print input variables & exit
 ### -uPRs = load info from file to PRs (not recreate branches)
@@ -32,7 +32,7 @@
 ### -dBranches = delete all created branches (keep PRs)
 ### -cPRs = close (decline) all created PRs
 ### -dPRs = delete all created PRs (keep branches)
-## $6 = (optional) source server url/team name. Default value is bitbucket cloud URL without any team name.
+## $6 = (optional, must be set to value or empty, if need to pass next args) source server url/team name. Default value is bitbucket cloud URL without any team name.
 ##    Values
 ##      'https://server.bitbucket.my/with/relative/path/projectName'
 ##      'https://server.bitbucket.my/with/relative/path/projectName/'
@@ -918,6 +918,10 @@ async def form_single_pr_comment(session, currComment, newCommentIds, prInfo, di
     return True
 
 async def upload_pr_comments(session, data):
+    if CURRENT_MODE != ProcessingMode.LOAD_INFO:
+        print("Mode is not supported for comments uploading")
+        return 0
+
     headers = data[0]
 
     comments = []
