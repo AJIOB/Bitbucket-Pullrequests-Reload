@@ -129,7 +129,7 @@ def dump_results(path, obj):
 
             fileName = unquote(o).replace(':', '_').replace('/', '_')
 
-            with open(path + os.path.sep + fileName, "w", encoding="utf8") as f:
+            with open(path + os.path.sep + fileName, "wb") as f:
                 f.write(blob)
     except Exception as e:
         print(f"Exception was caught for results dumping to path '{path}'")
@@ -163,9 +163,8 @@ def load_data_from_urls_with_backup(urls):
                 print()
                 exit(1)
         except NoSuchElementException as e:
-            print("Cannot find image element in Selenium. Exiting...")
+            print(f"Cannot find image element in Selenium for url {d}. Skipping it.")
             print()
-            exit(1)
         except Exception as e:
             print(f"Exception was caught for url '{d}'")
             print(e)
