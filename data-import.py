@@ -24,9 +24,10 @@
 ## $3 = server auth info: "username:password"
 ## $4 = server project/repo combination (such as 'my-workspace/test-repo')
 ## $5 = (optional) additional options:
-### "" (nothing, not passed or not supported) = load info from file to PRs
+### -uAll = load info from file to PRs with auto-detection PRs/PR comments
 ### -debug = print input variables & exit
 ### -uPRs = load info from file to PRs (not recreate branches)
+### -uPRsIncremental = load info from file to PRs (not recreate branches, check if PR was already created)
 ### -dAll = delete all created branches & PRs
 ### -dBranches = delete all created branches (keep PRs)
 ### -cPRs = close (decline) all created PRs
@@ -83,8 +84,9 @@ class ProcessingMode(Enum):
     LOAD_INFO_ONLY_PRS = 5
     CLOSE_PRS = 6
     DEBUG = 7
+    LOAD_INFO_ONLY_PRS_INCREMENTAL = 8
 
-CURRENT_MODE = ProcessingMode.LOAD_INFO
+CURRENT_MODE = None
 JSON_ADDITIONAL_INFO = {}
 IMAGES_ADDITIONAL_INFO_PATH = ''
 
@@ -215,18 +217,22 @@ def args_read(argv):
         mode = argv[5]
         if mode == '-dAll':
             CURRENT_MODE = ProcessingMode.DELETE_BRANCHES_PRS
+        elif mode == '-uAll':
+            CURRENT_MODE = ProcessingMode.LOAD_INFO
         elif mode == '-dBranches':
             CURRENT_MODE = ProcessingMode.DELETE_BRANCHES
         elif mode == '-dPRs':
             CURRENT_MODE = ProcessingMode.DELETE_PRS
         elif mode == '-uPRs':
             CURRENT_MODE = ProcessingMode.LOAD_INFO_ONLY_PRS
+        elif mode == '-uPRsIncremental':
+            CURRENT_MODE = ProcessingMode.LOAD_INFO_ONLY_PRS_INCREMENTAL
         elif mode == '-cPRs':
             CURRENT_MODE = ProcessingMode.CLOSE_PRS
         elif mode == '-debug':
             CURRENT_MODE = ProcessingMode.DEBUG
         else:
-            CURRENT_MODE = ProcessingMode.LOAD_INFO
+            CURRENT_MODE = None
 
     global SOURCE_SERVER_ABSOLUTE_URL_PREFIX
     SOURCE_SERVER_ABSOLUTE_URL_PREFIX = "https://bitbucket.org/"
@@ -485,7 +491,7 @@ async def upload_prs(session, data):
     # Should create old PRs at the beginning
     prs.reverse()
 
-    if CURRENT_MODE != ProcessingMode.LOAD_INFO_ONLY_PRS:
+    if CURRENT_MODE == ProcessingMode.LOAD_INFO:
         # Create branches
         await asyncio.gather(*[create_branches_for_pr(session, pr) for pr in prs])
 
@@ -1010,6 +1016,10 @@ async def main(argv):
     init()
     args_read(argv)
 
+    if CURRENT_MODE == None:
+        print("Current mode was not selected")
+        return
+
     async with aiohttp.ClientSession() as session:
         await main_select_mode(session)
 
@@ -1036,7 +1046,8 @@ async def main_select_mode(session):
         await delete_all_prs(session, PR_START_NAME, "ALL")
     if CURRENT_MODE == ProcessingMode.DELETE_BRANCHES or CURRENT_MODE == ProcessingMode.DELETE_BRANCHES_PRS:
         await delete_all_branches(session, BRANCH_START_NAME)
-    if CURRENT_MODE != ProcessingMode.LOAD_INFO and CURRENT_MODE != ProcessingMode.LOAD_INFO_ONLY_PRS:
+
+    if CURRENT_MODE == ProcessingMode.DELETE_BRANCHES or CURRENT_MODE == ProcessingMode.DELETE_BRANCHES_PRS or CURRENT_MODE == ProcessingMode.DELETE_PRS:
         return
 
     data = read_file(SRC_FILE)
