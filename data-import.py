@@ -29,6 +29,7 @@
 ### -uAllForce = '-uAll' + force creating cross refs
 ### -debug = print input variables & exit
 ### -uPRs = load info from file to PRs (not recreate branches)
+### -uPRsForce = '-uPRs' + force creating cross refs
 ### -dAll = delete all created branches & PRs
 ### -dBranches = delete all created branches (keep PRs)
 ### -cPRs = close (decline) all created PRs
@@ -250,6 +251,10 @@ def args_read(argv):
             CURRENT_MODE = ProcessingMode.DELETE_PRS
         elif mode == '-uPRs':
             CURRENT_MODE = ProcessingMode.LOAD_INFO_ONLY_PRS
+        elif mode == '-uPRsForce':
+            CURRENT_MODE = ProcessingMode.LOAD_INFO_ONLY_PRS
+
+            FORCE_CREATE_PRS_WITH_BAD_CROSS_REFS = True
         elif mode == '-cPRs':
             CURRENT_MODE = ProcessingMode.CLOSE_PRS
         elif mode == '-debug':
