@@ -573,7 +573,7 @@ async def form_single_pr_comment(session, currComment, newCommentIds, prInfo, di
         parent = newCommentIds[currComment.parentCommentId]
 
     textParts = [
-        append_timestamp_string_if_possible(f"Created by _{currComment.user}_ for commit {currComment.commit}", currComment.createdAt, errorDescription=f"Bad PR {currComment.prId} comment {currComment.id} creation date:"),
+        append_timestamp_string_if_possible(f"_Created by **{currComment.user}** for commit {currComment.commit}", currComment.createdAt, errorDescription=f"Bad PR {currComment.prId} comment {currComment.id} creation date:") + '_',
     ]
 
     if currComment.isDeleted == 'true':
