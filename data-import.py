@@ -533,8 +533,37 @@ async def upload_prs(session, data):
         await asyncio.gather(*[create_branches_for_pr(session, pr) for pr in prs])
 
     # Create pull requests
-    res = await asyncio.gather(*[upload_single_pr(session, pr) for pr in prs])
-    return sum(res)
+
+    prsToCheckAgain = prs
+
+    prevPrNumber = 0
+
+    # Block for infinite loop
+    while prevPrNumber != len(prsToCheckAgain):
+        prevPrNumber = len(prsToCheckAgain)
+        print(prevPrNumber, "comments will be checked for loading")
+
+        # Uses for speed up downloading big repo PRs
+        # Will be cleaned on every iteration loop for loading new self-cross-references
+        prsCache = {}
+
+        loadResults = await asyncio.gather(*[upload_single_pr(session, pr, prsCache) for pr in prs])
+
+        # check what wasn't uploaded
+        newPrsToCheckAgain = []
+        for i in range(prevPrNumber):
+            if not loadResults[i]:
+                newPrsToCheckAgain.append(prsToCheckAgain[i])
+
+        # save prev iteration as current
+        prsToCheckAgain = newPrsToCheckAgain
+
+    if len(prsToCheckAgain) != 0:
+        print("Cannot upload that PRs:")
+        for c in prsToCheckAgain:
+            print("ID", c.id, "body", c.title)
+
+    return len(prsToCheckAgain)
 
 async def create_branches_for_pr(session, pr):
     try:
@@ -569,7 +598,7 @@ async def create_branches_for_pr(session, pr):
         print(e)
         print()
 
-async def upload_single_pr(session, pr):
+async def upload_single_pr(session, pr, prsCache={}):
     try:
         # First number in title must be original PR number
         # for correct comments uploading
@@ -603,7 +632,7 @@ async def upload_single_pr(session, pr):
             descriptionParts.append('')
 
         descriptionParts.append("Original description:")
-        descriptionParts.append(await pr_all_process_body(session, pr))
+        descriptionParts.append(await pr_all_process_body(session, pr, prsCache))
 
         newDescription = '\n'.join(descriptionParts)
 
@@ -611,7 +640,7 @@ async def upload_single_pr(session, pr):
 
         await create_pr(session, newTitle, newDescription, formatBranchName(pr.id, SRC_BRANCH_PREFIX, pr.srcBranch), formatBranchName(pr.id, DST_BRANCH_PREFIX, pr.dstBranch))
 
-        return 0
+        return False
     except aiohttp.ClientResponseError as e:
         print(f"HTTP Exception was caught for PR {pr.id} PR creation")
         print(f"HTTP code {e.status}")
@@ -625,9 +654,9 @@ async def upload_single_pr(session, pr):
         print()
 
     # PR was not created
-    return 1
+    return True
 
-async def pr_all_process_body(session, prOrComment):
+async def pr_all_process_body(session, prOrComment, prsCache={}):
     raw = prOrComment.body
     html = prOrComment.bodyHtml
 
@@ -693,8 +722,13 @@ async def pr_all_process_body(session, prOrComment):
 
             allPrs = []
             try:
-                # Searching in ANOTHER REPOSITORY
-                allPrs = await list_all_prs(session, filterTitle=PR_START_NAME, repo=requiredRepoName)
+                if requiredRepoName in prsCache:
+                    allPrs = prsCache[requiredRepoName]
+                else:
+                    # Searching in ANOTHER REPOSITORY (possible)
+                    allPrs = await list_all_prs(session, filterTitle=PR_START_NAME, repo=requiredRepoName)
+
+                    prsCache[requiredRepoName] = allPrs
             except aiohttp.ClientResponseError as e:
                 print(f"Cannot receive list with new PRs for old URL '{url}'. HTTP error {e.status}, message {e.message}")
             except Exception as e:
@@ -731,8 +765,6 @@ async def pr_all_process_body(session, prOrComment):
 
             newUrl = SERVER + SERVER_PROJECTS_SUBSTRING + PROJECT + '/' + SERVER_REPOS_SUBSTRING + requiredRepoName + '/' + 'pull-requests/' + newPrId
 
-            print("HELLO OLD PR", oldPrId, "WITH URL", url, ". NEW ID IS", newPrId, "NEW URL", newUrl)
-
             raw = raw.replace(url, newUrl)
 
             continue
@@ -765,7 +797,7 @@ async def pr_all_process_body(session, prOrComment):
     return raw
 
 # Returns True if base PR comment exists, else False
-async def form_single_pr_comment(session, currComment, newCommentIds, prInfo, diffs={}):
+async def form_single_pr_comment(session, currComment, newCommentIds, prInfo, diffs={}, prsCache={}):
     # Receiving PR info
     if not currComment.prId in prInfo:
         print("Old PR", currComment.prId, "was not created. Comment", currComment.id, "cannot be created too")
@@ -790,7 +822,7 @@ async def form_single_pr_comment(session, currComment, newCommentIds, prInfo, di
 
     # Printing before diff, because diff may be very long
     textParts.append(f"Original message:")
-    textParts.append(await pr_all_process_body(session, currComment))
+    textParts.append(await pr_all_process_body(session, currComment, prsCache))
     textParts.append("")
 
     lineNum = None
@@ -941,7 +973,11 @@ async def upload_pr_comments(session, data):
         prevCommentNumber = len(commentsToCheckAgain)
         print(prevCommentNumber, "comments will be checked for loading")
 
-        loadResults = await asyncio.gather(*[form_single_pr_comment(session, c, newCommentIds, prInfo, JSON_ADDITIONAL_INFO) for c in commentsToCheckAgain])
+        # Uses for speed up downloading big repo PRs
+        # Will be cleaned on every iteration loop for loading new self-cross-references
+        prsCache = {}
+
+        loadResults = await asyncio.gather(*[form_single_pr_comment(session, c, newCommentIds, prInfo, JSON_ADDITIONAL_INFO, prsCache) for c in commentsToCheckAgain])
 
         # check what wasn't uploaded
         newCommentsToCheckAgain = []
@@ -956,6 +992,8 @@ async def upload_pr_comments(session, data):
         print("Cannot find parents for that comments:")
         for c in commentsToCheckAgain:
             print("ID", c.id, "body", c.body)
+
+    return len(commentsToCheckAgain)
 
 async def delete_all_branches(session, filterText=None):
     try:
@@ -1207,7 +1245,9 @@ async def main_select_mode(session):
         return res
     elif data[0][-1] == 'CommitHash':
         print("PRs comments were found. Uploading them")
-        await upload_pr_comments(session, data)
+        res = await upload_pr_comments(session, data)
+        print(res, "PR comments were not created")
+        return res
     else:
         print("Unknown source file format")
 
