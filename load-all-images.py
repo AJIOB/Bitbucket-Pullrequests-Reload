@@ -1,18 +1,21 @@
 #!/usr/bin/env python3.10
 # Args:
 ## $1 - token in format "user:password" for API authentication
-## $2 - dst json file with XXX sequence for replacing with backup number
+## $2 - dst folder with XXX sequence for replacing with backup number
 ## $3..$x - source csv files for searching & loading raw data from API
 
 import csv
 from datetime import datetime
-import json
+import os
 import re
 import requests
 from requests.auth import HTTPBasicAuth
 from selenium import webdriver
+from selenium.common.exceptions import NoSuchElementException
+from selenium.webdriver.common.by import By
 import sys
 import time
+from urllib.parse import unquote
 
 # Usually 1000 requests per 1 hour, but saving some jitter values
 # https://support.atlassian.com/bitbucket-cloud/docs/api-request-limits/
@@ -24,6 +27,7 @@ API_SUFFIX = ".png"
 PATTER_REPLACE_VALUE = "XXX"
 
 IS_USE_SELENIUM = True
+TIME_TO_AUTH_SECONDS = 45
 
 def init():
     try:
@@ -34,6 +38,11 @@ def init():
 
         # Looks like Windows uses long instead of long long
         csv.field_size_limit(maxLong)
+
+    # Enable single driver instance if need
+    if IS_USE_SELENIUM:
+        global SELENIUM_DRIVER
+        SELENIUM_DRIVER = webdriver.Firefox()
 
 def parse_args():
     USER_PASS = sys.argv[1]
@@ -51,18 +60,35 @@ def parse_args():
         SRC_FILES.append(p)
 
 def single_query_selenium_get_true_url(url):
-    pass
+    global SELENIUM_DRIVER
+    SELENIUM_DRIVER.get(url)
+
+    rawImagePath = '//img'
+    try:
+        # get the image source
+        img = SELENIUM_DRIVER.find_element(By.XPATH, rawImagePath)
+    except NoSuchElementException:
+        print(f"Cannot find image. Try to log in that page. You have {TIME_TO_AUTH_SECONDS} seconds")
+
+        time.sleep(TIME_TO_AUTH_SECONDS)
+
+        # get the image source again
+        img = SELENIUM_DRIVER.find_element(By.XPATH, rawImagePath)
+
+    src = img.get_attribute('src')
+
+    return src
 
 def single_query(url):
     if IS_USE_SELENIUM:
-        url = single_query_selenium(url)
+        url = single_query_selenium_get_true_url(url)
         res = requests.get(url)
     else:
         res = requests.get(url, auth=AUTH)
 
     res.raise_for_status()
 
-    return res.text
+    return res.content
 
 def load_csv_data():
     res = []
@@ -93,6 +119,23 @@ def select_only_urls(data):
     res = list(set(res))
     return res
 
+def dump_results(path, obj):
+    try:
+        # recursive creation
+        os.makedirs(path, exist_ok=True)
+
+        for o in obj:
+            blob = obj[o]
+
+            fileName = unquote(o).replace(':', '_').replace('/', '_')
+
+            with open(path + os.path.sep + fileName, "w", encoding="utf8") as f:
+                f.write(blob)
+    except Exception as e:
+        print(f"Exception was caught for results dumping to path '{path}'")
+        print(e)
+        print()
+
 def load_data_from_urls_with_backup(urls):
     step = 0
     i = 0
@@ -116,8 +159,13 @@ def load_data_from_urls_with_backup(urls):
             if e.response.status_code == 401:
                 print("Cannot authorize on server. Bad credentials or no permissions or OAuth2 is required (not supported). Exiting...")
                 if not IS_USE_SELENIUM:
-                    print("Try to enable Selenium with previous authorization in Chrome")
+                    print("Try to enable Selenium")
+                print()
                 exit(1)
+        except NoSuchElementException as e:
+            print("Cannot find image element in Selenium. Exiting...")
+            print()
+            exit(1)
         except Exception as e:
             print(f"Exception was caught for url '{d}'")
             print(e)
@@ -128,12 +176,10 @@ def load_data_from_urls_with_backup(urls):
             step += 1
 
             # temp saving
-            jsonTxt = json.dumps(res)
             resFileName = DST_FILE.replace(PATTER_REPLACE_VALUE, str(step))
-            with open(resFileName, "w", encoding="utf8") as f:
-                f.write(jsonTxt)
+            dump_results(resFileName, res)
 
-            print("File", resFileName, "was written")
+            print("Dump", resFileName, "was written")
 
             newTs = ts + BITBUCKET_RATE_LIMIT_INTERVAL_SECONDS
             tsDiff = newTs - time.time()
@@ -142,12 +188,10 @@ def load_data_from_urls_with_backup(urls):
             time.sleep(tsDiff)
 
     # saving full results
-    jsonTxt = json.dumps(res)
     resFileName = DST_FILE.replace(PATTER_REPLACE_VALUE, 'final')
-    with open(resFileName, "w", encoding="utf8") as f:
-        f.write(jsonTxt)
+    dump_results(resFileName, res)
 
-    print("Final file", resFileName, "was written")
+    print("Final dump", resFileName, "was written")
 
 def main():
     init()
@@ -155,10 +199,6 @@ def main():
 
     data = load_csv_data()
     urls = select_only_urls(data)
-
-    # Show urls if user wants to use them externally
-    print(urls)
-
     load_data_from_urls_with_backup(urls)
 
 if __name__ == '__main__':
