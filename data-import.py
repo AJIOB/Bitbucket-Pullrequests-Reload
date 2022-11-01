@@ -335,7 +335,7 @@ async def create_pr(session, title, description = None, srcBranch = "prTest1", d
         async with session.post(formatTemplate(URL_CREATE_PR), auth=AUTH, headers=POST_HEADERS, json=payload) as resp:
             return await response_process(resp)
 
-async def list_prs(session, start=0, state=OPENED_PR_STATE):
+async def list_prs(session, start=0, state=OPENED_PR_STATE, filterText=None):
     payload = {
         "start": start,
         "state": state,
@@ -343,6 +343,9 @@ async def list_prs(session, start=0, state=OPENED_PR_STATE):
 
     if DEFAULT_PAGE_RECORDS_LIMIT:
         payload["limit"] = DEFAULT_PAGE_RECORDS_LIMIT
+
+    if filterText:
+        payload["filterText"] = filterText
 
     async with MULTITHREAD_LIMIT:
         async with session.get(formatTemplate(URL_CREATE_PR), auth=AUTH, params=payload) as resp:
@@ -496,7 +499,8 @@ async def upload_prs(session, data):
         await asyncio.gather(*[create_branches_for_pr(session, pr) for pr in prs])
 
     # Create pull requests
-    await asyncio.gather(*[upload_single_pr(session, pr) for pr in prs])
+    res = await asyncio.gather(*[upload_single_pr(session, pr) for pr in prs])
+    return sum(res)
 
 async def create_branches_for_pr(session, pr):
     try:
@@ -571,6 +575,8 @@ async def upload_single_pr(session, pr):
         print("Creating PR", pr.id)
 
         await create_pr(session, newTitle, newDescription, formatBranchName(pr.id, SRC_BRANCH_PREFIX, pr.srcBranch), formatBranchName(pr.id, DST_BRANCH_PREFIX, pr.dstBranch))
+
+        return 0
     except aiohttp.ClientResponseError as e:
         print(f"HTTP Exception was caught for PR {pr.id} PR creation")
         print(f"HTTP code {e.status}")
@@ -582,6 +588,9 @@ async def upload_single_pr(session, pr):
         print(f"Exception was caught for PR {pr.id} PR creation")
         print(e)
         print()
+
+    # PR was not created
+    return 1
 
 async def pr_all_process_body(session, prOrComment):
     raw = prOrComment.body
@@ -789,7 +798,7 @@ async def upload_pr_comments(session, data):
         try:
             print(f"Loading PR info with paging offset {pagingOffset}")
 
-            res = await list_prs(session, pagingOffset, "ALL")
+            res = await list_prs(session, pagingOffset, "ALL", PR_START_NAME)
             res = json.loads(res)
 
             for v in res["values"]:
@@ -890,7 +899,7 @@ async def close_all_prs(session, filterTitle=None):
         start = 0
 
         while True:
-            res = await list_prs(session, start, state)
+            res = await list_prs(session, start, state, filterTitle)
             res = json.loads(res)
 
             tasks = []
@@ -931,7 +940,7 @@ async def delete_all_prs(session, filterTitle=None, state=OPENED_PR_STATE):
         start = 0
 
         while True:
-            res = await list_prs(session, start, state)
+            res = await list_prs(session, start, state, filterTitle)
             res = json.loads(res)
 
             tasks = []
@@ -1057,7 +1066,7 @@ async def main_select_mode(session):
         print("Data header was empty")
     elif data[0][-1] == 'ClosedBy':
         print("PRs were found. Uploading them")
-        await upload_prs(session, data)
+        return await upload_prs(session, data)
     elif data[0][-1] == 'CommitHash':
         print("PRs comments were found. Uploading them")
         await upload_pr_comments(session, data)
