@@ -17,6 +17,7 @@
 # - Bitbucket app key (HTTP access token) should be used instead of real password (with repository write permissions)
 # - as told in Bitbucket REST API docs (https://docs.atlassian.com/bitbucket-server/rest/5.16.0/bitbucket-rest.html, "Personal Repositories" part), if you want to access user project instead of workspace project, you should add '~' before your username. For example, use '~alex/my-repo' for accessing 'alex' personal workspace
 # - all cross-referenced repositories should be in one new workgroup
+# - PRs creation will be always incremented. Automatic branches creation for PR will be not
 #
 # Args sequence:
 ## $1 = source file name (csv-formatted data from ruby)
@@ -27,7 +28,6 @@
 ### -uAll = load info from file to PRs with auto-detection PRs/PR comments
 ### -debug = print input variables & exit
 ### -uPRs = load info from file to PRs (not recreate branches)
-### -uPRsIncremental = load info from file to PRs (not recreate branches, check if PR was already created)
 ### -dAll = delete all created branches & PRs
 ### -dBranches = delete all created branches (keep PRs)
 ### -cPRs = close (decline) all created PRs
@@ -95,7 +95,6 @@ class ProcessingMode(Enum):
     LOAD_INFO_ONLY_PRS = 5
     CLOSE_PRS = 6
     DEBUG = 7
-    LOAD_INFO_ONLY_PRS_INCREMENTAL = 8
 
 CURRENT_MODE = None
 JSON_ADDITIONAL_INFO = {}
@@ -242,8 +241,6 @@ def args_read(argv):
             CURRENT_MODE = ProcessingMode.DELETE_PRS
         elif mode == '-uPRs':
             CURRENT_MODE = ProcessingMode.LOAD_INFO_ONLY_PRS
-        elif mode == '-uPRsIncremental':
-            CURRENT_MODE = ProcessingMode.LOAD_INFO_ONLY_PRS_INCREMENTAL
         elif mode == '-cPRs':
             CURRENT_MODE = ProcessingMode.CLOSE_PRS
         elif mode == '-debug':
@@ -497,7 +494,7 @@ async def delete_branch(session, id, dryRun=False):
 async def upload_prs(session, data):
     headers = data[0]
 
-    prs = []
+    prs = {}
 
     # Parse data
     for d in data[1:]:
@@ -523,21 +520,44 @@ async def upload_prs(session, data):
             continue
 
         pr = PullRequest(number, user, title, state, createdAt, closedAt, body, bodyHtml, src, dst, srcBranch, dstBranch, declineReason, mergeCommit, closedBy)
-        prs.append(pr)
-
-    # Should create old PRs at the beginning
-    prs.reverse()
+        prs[number] = pr
 
     if CURRENT_MODE == ProcessingMode.LOAD_INFO:
         # Create branches
-        await asyncio.gather(*[create_branches_for_pr(session, pr) for pr in prs])
+        await asyncio.gather(*[create_branches_for_pr(session, prs[prId]) for prId in prs])
 
-    # Create pull requests
+    # Load already created PRs
+    try:
+        allPrs = await list_all_prs(session, filterTitle=PR_START_NAME)
+    except aiohttp.ClientResponseError as e:
+        print(f"Cannot receive list with already created PRs. HTTP error {e.status}, message {e.message}")
+    except Exception as e:
+        print(f"Cannot receive list with already created PRs. Error message {e}")
 
-    prsToCheckAgain = prs
+    print("PRs before cleanup:", len(prs))
+
+    # Remove already created PRs from creation list
+    for p in allPrs:
+        prTitle = p["title"]
+
+        # get first number, as described in PR title creation
+        numberSearch = re.search(r'\d+', prTitle)
+        if not numberSearch:
+            continue
+
+        capturedPrId = numberSearch.group()
+        # Removing from dict (key may not exists)
+        # Based on https://stackoverflow.com/a/11277439/6818663
+        prs.pop(capturedPrId, None)
+
+    print("PRs after cleanup:", len(prs))
+
+    # Resave data to usual list
+    prsToCheckAgain = list(prs.values())
 
     prevPrNumber = 0
 
+    # Create pull requests
     # Block for infinite loop
     while prevPrNumber != len(prsToCheckAgain):
         prevPrNumber = len(prsToCheckAgain)
