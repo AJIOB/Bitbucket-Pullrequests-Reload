@@ -3,8 +3,8 @@
 #
 # Full restoring sequence should be:
 # 1. Using test repo with the same sources, as in original
-# 2. Restoring all PRs & branches (csv with PRs, $5 should be empty)
-# 3. Restoring all PR comments (csv with PR comments, $5 should be with JSON file or empty)
+# 2. Restoring all PRs & branches (csv with PRs, $5 should be empty, $6 should be with images path)
+# 3. Restoring all PR comments (csv with PR comments, $5 should be empty, $6 should be with images path, $7 should be with JSON file)
 # 4. Close all PRs (any csv, $5 = '-cPRs')
 # 5. Delete all created branches (any csv, $5 = '-dBranches')
 #
@@ -16,36 +16,55 @@
 # - tested with Bitbucket Server v8.5.0 (not Bitbucket Cloud)
 # - Bitbucket app key (HTTP access token) should be used instead of real password (with repository write permissions)
 # - as told in Bitbucket REST API docs (https://docs.atlassian.com/bitbucket-server/rest/5.16.0/bitbucket-rest.html, "Personal Repositories" part), if you want to access user project instead of workspace project, you should add '~' before your username. For example, use '~alex/my-repo' for accessing 'alex' personal workspace
+# - all cross-referenced repositories should be in one new workgroup
+# - PRs creation will be always incremented. Automatic branches creation for PR will be not
 #
 # Args sequence:
 ## $1 = source file name (csv-formatted data from ruby)
 ## $2 = server URL (such as 'https://bitbucket.org/')
 ## $3 = server auth info: "username:password"
 ## $4 = server project/repo combination (such as 'my-workspace/test-repo')
-## $5 = (optional) additional options:
-### "" (nothing, not passed or not supported) = load info from file to PRs
+## $5 = execution mode:
+### -uAll = load info from file to PRs with auto-detection PRs/PR comments
+### -uAllForce = '-uAll' + force creating cross refs
 ### -debug = print input variables & exit
 ### -uPRs = load info from file to PRs (not recreate branches)
+### -uPRsForce = '-uPRs' + force creating cross refs
 ### -dAll = delete all created branches & PRs
 ### -dBranches = delete all created branches (keep PRs)
 ### -cPRs = close (decline) all created PRs
 ### -dPRs = delete all created PRs (keep branches)
+## $6 = (optional, must be set to value or empty, if need to pass next args) source server url/team name. Default value is bitbucket cloud URL without any team name.
+##    Values
+##      'https://server.bitbucket.my/with/relative/path/projectName'
+##      'https://server.bitbucket.my/with/relative/path/projectName/'
+##    will be decoded as:
+##      * "https://server.bitbucket.my/with/relative/path/" = old server name
+##      * "projectName" = project name (!= repo name)
+## $7..$x = (optional) additional args
 ### any_filename.json = json file will additional info:
 #### - PR comments uses that info in format key:value, where key = diff URL (usually bitbucket API), value = downloaded diff info from that URL
+### any_foldername/ = folder will additional info:
+#### - PRs & PR comments uses files as mirrors for images uploading
 
 import aiohttp
 import asyncio
 import csv
+from datetime import datetime
 from enum import Enum
 import json
+import os
 import re
 import sys
-from datetime import datetime
+from urllib.parse import unquote
 from zoneinfo import ZoneInfo
 
 OPENED_PR_STATE = "OPEN"
+ANY_PR_STATE = "ALL"
 SRC_BRANCH_PREFIX = 'src'
 DST_BRANCH_PREFIX = 'dst'
+# URL match regex from https://uibakery.io/regex-library/url-regex-python
+URLS_REGEX = r'https?:\/\/(?:www\.)?[-a-zA-Z0-9@:%._\+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b(?:[-a-zA-Z0-9()@:%_\+.~#?&\/=]*)'
 # Used by creation & filtering too, uses '[' for generating more specific output
 PR_START_NAME = "[Bitbucket Import"
 BRANCH_START_NAME = "bitbucket/"
@@ -62,7 +81,14 @@ LIMIT_NUMBER_SIMULTANEOUS_REQUESTS_BRANCH_DELETE = 10
 # True => print attached diffs
 # False => don't diffs as attaches
 PRINT_ATTACHED_DIFFS = False
+# True => create PRs with bad PR cross-refs
+# False => don't create PRs with bad PR cross-refs
+# Always True for PR comments creation
+# Can be set from CLI
+FORCE_CREATE_PRS_WITH_BAD_CROSS_REFS = None
 TARGET_COMMENTS_TIMEZONE = ZoneInfo("Europe/Moscow")
+SOURCE_SERVER_ABSOLUTE_URL_PREFIX = ""
+SOURCE_SERVER_IMAGES_CONTAINS = "/images/"
 
 class ProcessingMode(Enum):
     LOAD_INFO = 1
@@ -73,8 +99,9 @@ class ProcessingMode(Enum):
     CLOSE_PRS = 6
     DEBUG = 7
 
-CURRENT_MODE = ProcessingMode.LOAD_INFO
+CURRENT_MODE = None
 JSON_ADDITIONAL_INFO = {}
+IMAGES_ADDITIONAL_INFO_PATH = ''
 
 class PullRequest:
     def __init__(self, id, user, title, state, createdAt, closedAt, body, bodyHtml, srcCommit, dstCommit, srcBranch, dstBranch, declineReason, mergeCommit, closedBy):
@@ -151,6 +178,10 @@ def init():
     global URL_GET_COMMIT
     URL_GET_COMMIT = "{endpoint}rest/api/{version}/projects/{projectKey}/repos/{repositorySlug}/commits/{commitId}"
 
+    # Hand revert from UI attaching
+    global URL_ATTACH_FILE
+    URL_ATTACH_FILE = "{endpoint}projects/{projectKey}/repos/{repositorySlug}/attachments"
+
     # From https://confluence.atlassian.com/cloudkb/xsrf-check-failed-when-calling-cloud-apis-826874382.html
     global POST_HEADERS
     POST_HEADERS = {"X-Atlassian-Token": "no-check"}
@@ -161,58 +192,108 @@ def init():
     global MULTITHREAD_LIMIT_BRANCH_DELETE
     MULTITHREAD_LIMIT_BRANCH_DELETE = asyncio.Semaphore(LIMIT_NUMBER_SIMULTANEOUS_REQUESTS_BRANCH_DELETE)
 
-def args_read():
+def args_read(argv):
     global SRC_FILE
-    SRC_FILE = sys.argv[1]
+    SRC_FILE = argv[1]
 
     global SERVER
-    SERVER = sys.argv[2]
+    SERVER = argv[2]
     if not SERVER.endswith('/'):
         SERVER += '/'
 
     global SERVER_API_VERSION
+    global SERVER_PROJECTS_SUBSTRING
+    global SERVER_REPOS_SUBSTRING
     # 1 for custom bitbucket server/datacenter, 2 for cloud
     if 'bitbucket.org' in SERVER:
         SERVER_API_VERSION = 2
+        SERVER_PROJECTS_SUBSTRING = ''
+        SERVER_REPOS_SUBSTRING = ''
     else:
         SERVER_API_VERSION = 1
+        SERVER_PROJECTS_SUBSTRING = 'projects/'
+        SERVER_REPOS_SUBSTRING = 'repos/'
 
     SERVER_API_VERSION = f"{SERVER_API_VERSION}.0"
 
-    USER_PASS = sys.argv[3]
+    USER_PASS = argv[3]
     userPassSplit = USER_PASS.split(':')
 
     global AUTH
     AUTH = aiohttp.BasicAuth(userPassSplit[0], userPassSplit[1])
 
-    PROJECT_REPO = sys.argv[4]
+    PROJECT_REPO = argv[4]
     prjRepoSplit = PROJECT_REPO.split('/')
 
     global PROJECT
     global REPO
 
-    PROJECT = prjRepoSplit[0].lower()
+    PROJECT = prjRepoSplit[0]
     REPO = prjRepoSplit[1].lower()
 
-    if len(sys.argv) > 5:
+    global FORCE_CREATE_PRS_WITH_BAD_CROSS_REFS
+    FORCE_CREATE_PRS_WITH_BAD_CROSS_REFS = False
+
+    if len(argv) > 5:
         global CURRENT_MODE
-        mode = sys.argv[5]
+        mode = argv[5]
         if mode == '-dAll':
             CURRENT_MODE = ProcessingMode.DELETE_BRANCHES_PRS
+        elif mode == '-uAll':
+            CURRENT_MODE = ProcessingMode.LOAD_INFO
+        elif mode == '-uAllForce':
+            CURRENT_MODE = ProcessingMode.LOAD_INFO
+
+            FORCE_CREATE_PRS_WITH_BAD_CROSS_REFS = True
         elif mode == '-dBranches':
             CURRENT_MODE = ProcessingMode.DELETE_BRANCHES
         elif mode == '-dPRs':
             CURRENT_MODE = ProcessingMode.DELETE_PRS
         elif mode == '-uPRs':
             CURRENT_MODE = ProcessingMode.LOAD_INFO_ONLY_PRS
+        elif mode == '-uPRsForce':
+            CURRENT_MODE = ProcessingMode.LOAD_INFO_ONLY_PRS
+
+            FORCE_CREATE_PRS_WITH_BAD_CROSS_REFS = True
         elif mode == '-cPRs':
             CURRENT_MODE = ProcessingMode.CLOSE_PRS
         elif mode == '-debug':
             CURRENT_MODE = ProcessingMode.DEBUG
-        elif mode.endswith('.json'):
-            with open(mode, "r", encoding="utf8") as f:
-                global JSON_ADDITIONAL_INFO
+        else:
+            CURRENT_MODE = None
+
+    global SOURCE_SERVER_ABSOLUTE_URL_PREFIX
+    SOURCE_SERVER_ABSOLUTE_URL_PREFIX = "https://bitbucket.org/"
+    global OLD_PROJECT_NAME
+    OLD_PROJECT_NAME = None
+    if len(argv) > 6:
+        if re.fullmatch(URLS_REGEX, argv[6]):
+            prefix = argv[6]
+            if not prefix.endswith('/'):
+                prefix += '/'
+
+            oldPrjName = OLD_PROJECT_NAME
+
+            delim = prefix.rfind('/', 0, -1)
+            if delim > 0:
+                # no need end /
+                oldPrjName = prefix[(delim + 1):-1]
+                # need end /
+                prefix = prefix[:(delim + 1)]
+
+            SOURCE_SERVER_ABSOLUTE_URL_PREFIX = prefix
+            OLD_PROJECT_NAME = oldPrjName
+
+    global JSON_ADDITIONAL_INFO
+    JSON_ADDITIONAL_INFO = {}
+    global IMAGES_ADDITIONAL_INFO_PATH
+    IMAGES_ADDITIONAL_INFO_PATH = ''
+    for p in argv[7:]:
+        if p.endswith('.json'):
+            with open(p, "r", encoding="utf8") as f:
                 JSON_ADDITIONAL_INFO = json.load(f)
+        elif p.endswith('/'):
+            IMAGES_ADDITIONAL_INFO_PATH = p
 
 def read_file(path):
     rows = []
@@ -224,12 +305,15 @@ def read_file(path):
 
     return rows
 
-def formatTemplate(template, prId=None, commitId=None):
+def formatTemplate(template, prId=None, commitId=None, repo=None):
+    if repo == None:
+        repo = REPO
+
     return template.format(
         endpoint=SERVER,
         version=SERVER_API_VERSION,
         projectKey=PROJECT,
-        repositorySlug=REPO,
+        repositorySlug=repo,
         pullRequestId=prId,
         commitId=commitId
     )
@@ -296,7 +380,7 @@ async def create_pr(session, title, description = None, srcBranch = "prTest1", d
         async with session.post(formatTemplate(URL_CREATE_PR), auth=AUTH, headers=POST_HEADERS, json=payload) as resp:
             return await response_process(resp)
 
-async def list_prs(session, start=0, state=OPENED_PR_STATE):
+async def list_prs(session, start=0, state=OPENED_PR_STATE, filterText=None, repo=None):
     payload = {
         "start": start,
         "state": state,
@@ -305,8 +389,11 @@ async def list_prs(session, start=0, state=OPENED_PR_STATE):
     if DEFAULT_PAGE_RECORDS_LIMIT:
         payload["limit"] = DEFAULT_PAGE_RECORDS_LIMIT
 
+    if filterText:
+        payload["filterText"] = filterText
+
     async with MULTITHREAD_LIMIT:
-        async with session.get(formatTemplate(URL_CREATE_PR), auth=AUTH, params=payload) as resp:
+        async with session.get(formatTemplate(URL_CREATE_PR, repo=repo), auth=AUTH, params=payload) as resp:
             return await response_process(resp)
 
 async def close_pr(session, id, version, comment=None):
@@ -369,6 +456,18 @@ async def get_commit_info(session, commitToRead):
         async with session.get(formatTemplate(URL_GET_COMMIT, commitId = commitToRead), auth=AUTH) as resp:
             return await response_process(resp)
 
+async def attach_file(session, filePathToAttach):
+    fileName = os.path.basename(filePathToAttach)
+
+    with open(filePathToAttach, "rb") as f:
+        with aiohttp.MultipartWriter('form-data') as mpwriter:
+            part = mpwriter.append(f)
+            part.set_content_disposition('form-data', name='files', filename=fileName)
+
+            async with MULTITHREAD_LIMIT:
+                async with session.post(formatTemplate(URL_ATTACH_FILE), auth=AUTH, data=mpwriter) as resp:
+                    return await response_process(resp)
+
 async def create_branch(session, name, commit):
     payload = {
         "name": name,
@@ -409,7 +508,7 @@ async def delete_branch(session, id, dryRun=False):
 async def upload_prs(session, data):
     headers = data[0]
 
-    prs = []
+    prs = {}
 
     # Parse data
     for d in data[1:]:
@@ -435,17 +534,70 @@ async def upload_prs(session, data):
             continue
 
         pr = PullRequest(number, user, title, state, createdAt, closedAt, body, bodyHtml, src, dst, srcBranch, dstBranch, declineReason, mergeCommit, closedBy)
-        prs.append(pr)
+        prs[number] = pr
 
-    # Should create old PRs at the beginning
-    prs.reverse()
-
-    if CURRENT_MODE != ProcessingMode.LOAD_INFO_ONLY_PRS:
+    if CURRENT_MODE == ProcessingMode.LOAD_INFO:
         # Create branches
-        await asyncio.gather(*[create_branches_for_pr(session, pr) for pr in prs])
+        await asyncio.gather(*[create_branches_for_pr(session, prs[prId]) for prId in prs])
+
+    # Load already created PRs
+    try:
+        allPrs = await list_all_prs(session, filterTitle=PR_START_NAME)
+    except aiohttp.ClientResponseError as e:
+        print(f"Cannot receive list with already created PRs. HTTP error {e.status}, message {e.message}")
+    except Exception as e:
+        print(f"Cannot receive list with already created PRs. Error message {e}")
+
+    print("PRs before cleanup:", len(prs))
+
+    # Remove already created PRs from creation list
+    for p in allPrs:
+        prTitle = p["title"]
+
+        # get first number, as described in PR title creation
+        numberSearch = re.search(r'\d+', prTitle)
+        if not numberSearch:
+            continue
+
+        capturedPrId = numberSearch.group()
+        # Removing from dict (key may not exists)
+        # Based on https://stackoverflow.com/a/11277439/6818663
+        prs.pop(capturedPrId, None)
+
+    print("PRs after cleanup:", len(prs))
+
+    # Resave data to usual list
+    prsToCheckAgain = list(prs.values())
+
+    prevPrNumber = 0
 
     # Create pull requests
-    await asyncio.gather(*[upload_single_pr(session, pr) for pr in prs])
+    # Block for infinite loop
+    while prevPrNumber != len(prsToCheckAgain):
+        prevPrNumber = len(prsToCheckAgain)
+        print(prevPrNumber, "PRs will be checked for loading")
+
+        # Uses for speed up downloading big repo PRs
+        # Will be cleaned on every iteration loop for loading new self-cross-references
+        prsCache = {}
+
+        loadResults = await asyncio.gather(*[form_single_pr(session, pr, prsCache) for pr in prsToCheckAgain])
+
+        # check what wasn't uploaded
+        newPrsToCheckAgain = []
+        for i in range(prevPrNumber):
+            if not loadResults[i]:
+                newPrsToCheckAgain.append(prsToCheckAgain[i])
+
+        # save prev iteration as current
+        prsToCheckAgain = newPrsToCheckAgain
+
+    if len(prsToCheckAgain) != 0:
+        print("Cannot upload that PRs:")
+        for c in prsToCheckAgain:
+            print("ID", c.id, "body", c.title)
+
+    return len(prsToCheckAgain)
 
 async def create_branches_for_pr(session, pr):
     try:
@@ -480,10 +632,11 @@ async def create_branches_for_pr(session, pr):
         print(e)
         print()
 
-async def upload_single_pr(session, pr):
+async def form_single_pr(session, pr, prsCache={}):
     try:
         # First number in title must be original PR number
         # for correct comments uploading
+        # & cross-references creating
         newTitle = f"{PR_START_NAME} {pr.id}, {pr.state}] {pr.title}"
 
         descriptionParts = [
@@ -513,13 +666,15 @@ async def upload_single_pr(session, pr):
             descriptionParts.append('')
 
         descriptionParts.append("Original description:")
-        descriptionParts.append(pr_all_process_body(pr))
+        descriptionParts.append(await pr_all_process_body(session, pr, prsCache))
 
         newDescription = '\n'.join(descriptionParts)
 
         print("Creating PR", pr.id)
 
         await create_pr(session, newTitle, newDescription, formatBranchName(pr.id, SRC_BRANCH_PREFIX, pr.srcBranch), formatBranchName(pr.id, DST_BRANCH_PREFIX, pr.dstBranch))
+
+        return True
     except aiohttp.ClientResponseError as e:
         print(f"HTTP Exception was caught for PR {pr.id} PR creation")
         print(f"HTTP code {e.status}")
@@ -532,9 +687,12 @@ async def upload_single_pr(session, pr):
         print(e)
         print()
 
-def pr_all_process_body(comment):
-    raw = comment.body
-    html = comment.bodyHtml
+    # PR was not created
+    return False
+
+async def pr_all_process_body(session, prOrComment, prsCache={}):
+    raw = prOrComment.body
+    html = prOrComment.bodyHtml
 
     # Processing username cites
     # They are formatted in raw body as @{GUID} or @{number:GUID}
@@ -547,7 +705,7 @@ def pr_all_process_body(comment):
         # '@' not in match for removing unwanted triggers
         idSearch = re.search(re.escape(realId) + r'"[^>]*>@([^<>]*)</', html)
         if not idSearch:
-            print(f"Corrupted HTML message for object {comment.id}")
+            print(f"Corrupted HTML message for object {prOrComment.id}")
             continue
 
         realUser = idSearch.group(1)
@@ -555,10 +713,126 @@ def pr_all_process_body(comment):
         # User name will be bold & italic
         raw = raw.replace(m, f"***{realUser}***")
 
+    # Processing absolute URLs for bitbucket
+    matches = re.findall(URLS_REGEX, raw)
+    for i, m in enumerate(matches):
+        if m.endswith(')'):
+            # That is regex bug
+            matches[i] = m[:-1]
+
+    matches = set(matches)
+    for url in matches:
+        if not url.startswith(SOURCE_SERVER_ABSOLUTE_URL_PREFIX):
+            print(f"Unsupported URL '{url}' was detected for for PR/PR comment {prOrComment.id}. Skipping it")
+            continue
+
+        if SOURCE_SERVER_IMAGES_CONTAINS in url:
+            # This is image, need to check
+
+            # Based on name encoding on saving
+            diskFileName = unquote(url).replace(':', '_').replace('/', '_')
+            # IMAGES_ADDITIONAL_INFO_PATH already has last '/'
+            fullDiskName = IMAGES_ADDITIONAL_INFO_PATH + diskFileName
+
+            try:
+                attachRes = await attach_file(session, fullDiskName)
+                attachRes = json.loads(attachRes)
+
+                # Thanks, Postman & reverse
+                newUrl = attachRes["attachments"][0]["links"]["attachment"]["href"]
+
+                raw = raw.replace(url, newUrl)
+            except aiohttp.ClientResponseError as e:
+                print(f"Cannot attach file from old URL '{url}'. HTTP error {e.status}, message {e.message}")
+            except Exception as e:
+                print(f"Cannot attach file from old URL '{url}'. Error message {e}")
+
+            continue
+
+        prIdMatch = re.search(re.escape(SOURCE_SERVER_ABSOLUTE_URL_PREFIX) + r'.*/([^/]+)/pull-requests/(\d+)', url)
+        if prIdMatch:
+            # This is PR or PR comment, should process as PR link
+            requiredRepoName = prIdMatch.group(1)
+            oldPrId = prIdMatch.group(2)
+
+            allPrs = []
+            try:
+                if requiredRepoName in prsCache:
+                    allPrs = prsCache[requiredRepoName]
+                else:
+                    # Searching in ANOTHER REPOSITORY (possible)
+                    allPrs = await list_all_prs(session, filterTitle=PR_START_NAME, repo=requiredRepoName)
+
+                    prsCache[requiredRepoName] = allPrs
+            except aiohttp.ClientResponseError as e:
+                print(f"Cannot receive list with new PRs for old URL '{url}'. HTTP error {e.status}, message {e.message}")
+            except Exception as e:
+                print(f"Cannot receive list with new PRs for old URL '{url}'. Error message {e}")
+
+            newPrId = None
+            for v in allPrs:
+                prId = v["id"]
+                prTitle = v["title"]
+
+                # get first number, as described in PR title creation
+                numberSearch = re.search(r'\d+', prTitle)
+                if not numberSearch:
+                    continue
+
+                capturedPrId = numberSearch.group()
+                if capturedPrId == oldPrId:
+                    newPrId = str(prId)
+                    break
+
+            if newPrId == None:
+                errorMsg = f"Cannot find new PR id for old URL '{url}'"
+                print(errorMsg)
+                if not FORCE_CREATE_PRS_WITH_BAD_CROSS_REFS:
+                    try:
+                        # PR comments always force created, because they must be load after all possible PRs were created
+                        prOrComment.prId
+                    except AttributeError:
+                        # Here => this is PR, not PR comment
+                        raise Exception(errorMsg)
+
+                # Set pseudo PR ID
+                newPrId = "OLD_" + oldPrId
+
+            newUrl = SERVER + SERVER_PROJECTS_SUBSTRING + PROJECT + '/' + SERVER_REPOS_SUBSTRING + requiredRepoName + '/' + 'pull-requests/' + newPrId
+
+            raw = raw.replace(url, newUrl)
+
+            continue
+
+        # Trying to find old project name & replace it
+        # At first position must be max match paths
+        possiblePrefixes = [
+            SOURCE_SERVER_ABSOLUTE_URL_PREFIX + 'projects/' + OLD_PROJECT_NAME + '/' + 'repos/',
+            SOURCE_SERVER_ABSOLUTE_URL_PREFIX + 'projects/' + OLD_PROJECT_NAME + '/',
+            SOURCE_SERVER_ABSOLUTE_URL_PREFIX + OLD_PROJECT_NAME + '/',
+        ]
+
+        newUrl = None
+        for p in possiblePrefixes:
+            if url.startswith(p):
+                print(f"Unknown project URL type '{url}' was detected for PR/PR comment {prOrComment.id}. Force replacing with current project")
+
+                # Bitbucket server
+                newUrl = SERVER + SERVER_PROJECTS_SUBSTRING + PROJECT + '/' + SERVER_REPOS_SUBSTRING + url[len(p):]
+
+                break
+
+        if not newUrl:
+            print(f"Unknown URL type '{url}' was detected for PR/PR comment {prOrComment.id}. Force replacing with current root server")
+
+            newUrl = SERVER + url[len(SOURCE_SERVER_ABSOLUTE_URL_PREFIX):]
+
+        raw = raw.replace(url, newUrl)
+
     return raw
 
 # Returns True if base PR comment exists, else False
-async def form_single_pr_comment(session, currComment, newCommentIds, prInfo, diffs={}):
+async def form_single_pr_comment(session, currComment, newCommentIds, prInfo, diffs={}, prsCache={}):
     # Receiving PR info
     if not currComment.prId in prInfo:
         print("Old PR", currComment.prId, "was not created. Comment", currComment.id, "cannot be created too")
@@ -583,7 +857,7 @@ async def form_single_pr_comment(session, currComment, newCommentIds, prInfo, di
 
     # Printing before diff, because diff may be very long
     textParts.append(f"Original message:")
-    textParts.append(pr_all_process_body(currComment))
+    textParts.append(await pr_all_process_body(session, currComment, prsCache))
     textParts.append("")
 
     lineNum = None
@@ -659,6 +933,10 @@ async def form_single_pr_comment(session, currComment, newCommentIds, prInfo, di
     return True
 
 async def upload_pr_comments(session, data):
+    if CURRENT_MODE != ProcessingMode.LOAD_INFO:
+        print("Mode is not supported for comments uploading")
+        return 0
+
     headers = data[0]
 
     comments = []
@@ -691,46 +969,36 @@ async def upload_pr_comments(session, data):
     prInfo = {}
 
     # Loading PR info
-    pagingOffset = 0
-    while True:
-        try:
-            print(f"Loading PR info with paging offset {pagingOffset}")
+    try:
+        print(f"Loading PR info")
 
-            res = await list_prs(session, pagingOffset, "ALL")
-            res = json.loads(res)
+        res = await list_all_prs(session, filterTitle=PR_START_NAME)
 
-            for v in res["values"]:
-                prId = v["id"]
-                prTitle = v["title"]
-                prVersion = v["version"]
-                if PR_START_NAME and not PR_START_NAME in prTitle:
-                    continue
+        for v in res:
+            prId = v["id"]
+            prTitle = v["title"]
+            prVersion = v["version"]
 
-                # get first number, as described in PR title creation
-                numberSearch = re.search(r'\d+', prTitle)
-                if not numberSearch:
-                    print(f"Bad PR {prId}: unsupported title: '{prTitle}'")
-                    continue
+            # get first number, as described in PR title creation
+            numberSearch = re.search(r'\d+', prTitle)
+            if not numberSearch:
+                print(f"Bad PR {prId}: unsupported title: '{prTitle}'")
+                continue
 
-                originalPrId = numberSearch.group()
+            originalPrId = numberSearch.group()
 
-                prInfo[originalPrId] = PullRequestShort(prId, prVersion)
-
-            if res["isLastPage"]:
-                break
-
-            pagingOffset = res["nextPageStart"]
-        except aiohttp.ClientResponseError as e:
-            print(f"HTTP Exception was caught while loading PR info (pagination offset {pagingOffset})")
-            print(f"HTTP code {e.status}")
-            print(e.message)
-            print()
-            if e.status in HTTP_EXIT_CODES:
-                exit(e.status)
-        except Exception as e:
-            print(f"Exception was caught while loading PR info (pagination offset {pagingOffset})")
-            print(e)
-            print()
+            prInfo[originalPrId] = PullRequestShort(prId, prVersion)
+    except aiohttp.ClientResponseError as e:
+        print(f"HTTP Exception was caught while loading PR info")
+        print(f"HTTP code {e.status}")
+        print(e.message)
+        print()
+        if e.status in HTTP_EXIT_CODES:
+            exit(e.status)
+    except Exception as e:
+        print(f"Exception was caught while loading PR info")
+        print(e)
+        print()
 
     # key will be old comment id, value will be new comment id
     newCommentIds = {}
@@ -744,7 +1012,11 @@ async def upload_pr_comments(session, data):
         prevCommentNumber = len(commentsToCheckAgain)
         print(prevCommentNumber, "comments will be checked for loading")
 
-        loadResults = await asyncio.gather(*[form_single_pr_comment(session, c, newCommentIds, prInfo, JSON_ADDITIONAL_INFO) for c in commentsToCheckAgain])
+        # Uses for speed up downloading big repo PRs
+        # Will be cleaned on every iteration loop for loading new self-cross-references
+        prsCache = {}
+
+        loadResults = await asyncio.gather(*[form_single_pr_comment(session, c, newCommentIds, prInfo, JSON_ADDITIONAL_INFO, prsCache) for c in commentsToCheckAgain])
 
         # check what wasn't uploaded
         newCommentsToCheckAgain = []
@@ -759,6 +1031,8 @@ async def upload_pr_comments(session, data):
         print("Cannot find parents for that comments:")
         for c in commentsToCheckAgain:
             print("ID", c.id, "body", c.body)
+
+    return len(commentsToCheckAgain)
 
 async def delete_all_branches(session, filterText=None):
     try:
@@ -790,6 +1064,46 @@ async def delete_all_branches(session, filterText=None):
         print(e)
         print()
 
+async def list_all_prs(session, state=ANY_PR_STATE, filterTitle=None, repo=None):
+    allPrs = []
+
+    try:
+        start = 0
+
+        while True:
+            res = await list_prs(session, start, state, filterTitle, repo)
+            res = json.loads(res)
+
+            for v in res["values"]:
+                prId = v["id"]
+                prTitle = v["title"]
+                if filterTitle and not filterTitle in prTitle:
+                    start += 1
+
+                    print("Skipping PR", prId, "with title", prTitle)
+
+                    continue
+
+                allPrs.append(v)
+
+            if res["isLastPage"]:
+                break
+
+            start = res["nextPageStart"]
+    except aiohttp.ClientResponseError as e:
+        print(f"HTTP Exception was caught while all PRs listing")
+        print(f"HTTP code {e.status}")
+        print(e.message)
+        print()
+        if e.status in HTTP_EXIT_CODES:
+            exit(e.status)
+    except Exception as e:
+        print(f"Exception was caught while all PRs listing")
+        print(e)
+        print()
+
+    return allPrs
+
 async def close_all_prs(session, filterTitle=None):
     state=OPENED_PR_STATE
 
@@ -797,7 +1111,7 @@ async def close_all_prs(session, filterTitle=None):
         start = 0
 
         while True:
-            res = await list_prs(session, start, state)
+            res = await list_prs(session, start, state, filterTitle)
             res = json.loads(res)
 
             tasks = []
@@ -838,7 +1152,7 @@ async def delete_all_prs(session, filterTitle=None, state=OPENED_PR_STATE):
         start = 0
 
         while True:
-            res = await list_prs(session, start, state)
+            res = await list_prs(session, start, state, filterTitle)
             res = json.loads(res)
 
             tasks = []
@@ -919,9 +1233,13 @@ async def delete_pr_no_error(session, prId, prVersion):
         print(e)
         print()
 
-async def main():
+async def main(argv):
     init()
-    args_read()
+    args_read(argv)
+
+    if CURRENT_MODE == None:
+        print("Current mode was not selected")
+        return
 
     async with aiohttp.ClientSession() as session:
         await main_select_mode(session)
@@ -931,9 +1249,13 @@ async def main_select_mode(session):
         print("Src:", SRC_FILE)
         print("URL:", SERVER)
         print("API:", SERVER_API_VERSION)
-        print("Auth:", AUTH.username, AUTH.password)
+        print("Auth:", AUTH.login, AUTH.password)
         print("Prj:", PROJECT)
         print("Repo:", REPO)
+        print("Source server:", SOURCE_SERVER_ABSOLUTE_URL_PREFIX)
+        print("Old project name:", OLD_PROJECT_NAME)
+        print("Images folder:", IMAGES_ADDITIONAL_INFO_PATH)
+        print("JSON data:", JSON_ADDITIONAL_INFO)
 
         return
 
@@ -943,10 +1265,11 @@ async def main_select_mode(session):
 
     if CURRENT_MODE == ProcessingMode.DELETE_BRANCHES_PRS or CURRENT_MODE == ProcessingMode.DELETE_PRS:
         # Must be done before branches removing
-        await delete_all_prs(session, PR_START_NAME, "ALL")
+        await delete_all_prs(session, PR_START_NAME, ANY_PR_STATE)
     if CURRENT_MODE == ProcessingMode.DELETE_BRANCHES or CURRENT_MODE == ProcessingMode.DELETE_BRANCHES_PRS:
         await delete_all_branches(session, BRANCH_START_NAME)
-    if CURRENT_MODE != ProcessingMode.LOAD_INFO and CURRENT_MODE != ProcessingMode.LOAD_INFO_ONLY_PRS:
+
+    if CURRENT_MODE == ProcessingMode.DELETE_BRANCHES or CURRENT_MODE == ProcessingMode.DELETE_BRANCHES_PRS or CURRENT_MODE == ProcessingMode.DELETE_PRS:
         return
 
     data = read_file(SRC_FILE)
@@ -956,10 +1279,14 @@ async def main_select_mode(session):
         print("Data header was empty")
     elif data[0][-1] == 'ClosedBy':
         print("PRs were found. Uploading them")
-        await upload_prs(session, data)
+        res = await upload_prs(session, data)
+        print(res, "PRs were not created")
+        return res
     elif data[0][-1] == 'CommitHash':
         print("PRs comments were found. Uploading them")
-        await upload_pr_comments(session, data)
+        res = await upload_pr_comments(session, data)
+        print(res, "PR comments were not created")
+        return res
     else:
         print("Unknown source file format")
 
@@ -969,6 +1296,6 @@ if __name__ == '__main__':
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     try:
-        asyncio.run(main())
+        asyncio.run(main(sys.argv))
     except KeyboardInterrupt:
         pass

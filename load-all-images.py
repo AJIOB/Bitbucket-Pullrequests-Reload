@@ -23,7 +23,7 @@ BITBUCKET_RATE_LIMIT = 970
 BITBUCKET_RATE_LIMIT_INTERVAL_SECONDS = 3600 + 60
 
 API_PREFIX = "https://bitbucket.org/"
-API_SUFFIX = ".png"
+API_CONTAINS = "/images/"
 PATTER_REPLACE_VALUE = "XXX"
 
 IS_USE_SELENIUM = True
@@ -113,7 +113,11 @@ def select_only_urls(data):
         for m in matches:
             urls.append(m)
 
-    res = [d for d in urls if d.startswith(API_PREFIX) and d.endswith(API_SUFFIX)]
+    res = [d for d in urls if d.startswith(API_PREFIX) and API_CONTAINS in d]
+    for i, r in enumerate(res):
+        if r.endswith(')'):
+            # That is regex bug
+            res[i] = r[:-1]
 
     # need only unique urls
     res = list(set(res))
