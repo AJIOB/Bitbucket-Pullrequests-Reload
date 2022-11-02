@@ -44,6 +44,11 @@ def init():
         global SELENIUM_DRIVER
         SELENIUM_DRIVER = webdriver.Firefox()
 
+def deinit():
+    if IS_USE_SELENIUM:
+        global SELENIUM_DRIVER
+        SELENIUM_DRIVER.quit()
+
 def parse_args():
     USER_PASS = sys.argv[1]
     userPassSplit = USER_PASS.split(':')
@@ -197,12 +202,15 @@ def load_data_from_urls_with_backup(urls):
     print("Final dump", resFileName, "was written")
 
 def main():
-    init()
-    parse_args()
+    try:
+        init()
+        parse_args()
 
-    data = load_csv_data()
-    urls = select_only_urls(data)
-    load_data_from_urls_with_backup(urls)
+        data = load_csv_data()
+        urls = select_only_urls(data)
+        load_data_from_urls_with_backup(urls)
+    finally:
+        deinit()
 
 if __name__ == '__main__':
     main()
