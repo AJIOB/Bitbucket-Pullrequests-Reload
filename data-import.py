@@ -22,7 +22,8 @@
 # - as told in Bitbucket REST API docs (https://docs.atlassian.com/bitbucket-server/rest/5.16.0/bitbucket-rest.html, "Personal Repositories" part), if you want to access user project instead of workspace project, you should add '~' before your username. For example, use '~alex/my-repo' for accessing 'alex' personal workspace
 # - all cross-referenced repositories should be in one new workgroup
 # - PRs creation will be always incremented. Automatic branches creation for PR will be not
-# - latest Bitbucket Server REST API is available here: https://docs.atlassian.com/bitbucket-server/rest/latest/bitbucket-rest.html
+# - latest Bitbucket Server REST API is available here: https://docs.atlassian.com/bitbucket-server/rest/latest/bitbucket-rest.html (not really latest)
+#   and here: https://developer.atlassian.com/server/bitbucket/rest/
 # - latest Bitbucket Cloud REST API is available here: https://developer.atlassian.com/cloud/bitbucket/rest/ - and it is not compatible with Bitbucket Server REST API
 #
 # Args sequence:
@@ -1153,7 +1154,7 @@ async def close_all_prs(session, filterTitle=None):
                     continue
 
                 print("Closing PR", prId, "version", prVersion, "with title", prTitle)
-                tasks.append(close_pr_no_error(session, prId, prVersion, "Imported pull request"))
+                tasks.append(close_pr_no_error(session, prId, prVersion))
 
             # Wait all tasks for that iteration
             await asyncio.gather(*tasks)
@@ -1228,7 +1229,7 @@ async def delete_branch_no_error(session, branchId):
         print(e)
         print()
 
-async def close_pr_no_error(session, id, version, comment):
+async def close_pr_no_error(session, id, version, comment=None):
     try:
         return await close_pr(session, id, version, comment)
     except aiohttp.ClientResponseError as e:
