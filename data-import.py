@@ -22,9 +22,11 @@
 # - as told in Bitbucket REST API docs (https://docs.atlassian.com/bitbucket-server/rest/5.16.0/bitbucket-rest.html, "Personal Repositories" part), if you want to access user project instead of workspace project, you should add '~' before your username. For example, use '~alex/my-repo' for accessing 'alex' personal workspace
 # - all cross-referenced repositories should be in one new workgroup
 # - PRs creation will be always incremented. Automatic branches creation for PR will be not
+# - latest Bitbucket Server REST API is available here: https://docs.atlassian.com/bitbucket-server/rest/latest/bitbucket-rest.html
+# - latest Bitbucket Cloud REST API is available here: https://developer.atlassian.com/cloud/bitbucket/rest/ - and it is not compatible with Bitbucket Server REST API
 #
 # Args sequence:
-## $1 = new server URL (such as 'https://bitbucket.org/')
+## $1 = new server URL (such as 'https://bitbucket.example.com/')
 ## $2 = new server auth info: "username:password"
 ## $3 = new server project/repo combination (such as 'my-workspace/test-repo')
 ## $4 = execution mode:
@@ -86,6 +88,9 @@ LIMIT_NUMBER_SIMULTANEOUS_REQUESTS_BRANCH_DELETE = 10
 # True => print attached diffs
 # False => don't diffs as attaches
 PRINT_ATTACHED_DIFFS = False
+# True => using latest API version
+# False => using API version autodetection by server name
+FORCE_USING_LATEST_API = False
 # True => create PRs with bad PR cross-refs
 # False => don't create PRs with bad PR cross-refs
 # Always True for PR comments creation
@@ -216,7 +221,10 @@ def args_read(argv):
         SERVER_PROJECTS_SUBSTRING = 'projects/'
         SERVER_REPOS_SUBSTRING = 'repos/'
 
-    SERVER_API_VERSION = f"{SERVER_API_VERSION}.0"
+    if FORCE_USING_LATEST_API:
+        SERVER_API_VERSION = "latest"
+    else:
+        SERVER_API_VERSION = f"{SERVER_API_VERSION}.0"
 
     USER_PASS = argv[2]
     userPassSplit = USER_PASS.split(':')
