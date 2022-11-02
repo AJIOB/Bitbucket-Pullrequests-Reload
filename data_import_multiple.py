@@ -15,7 +15,7 @@
 ##     {
 ##       "name": "repo1",
 ##       "csv-pr": "data/export1.csv",
-##       "csv-pr-comments": "data/export1.comments.csv"
+##       "csv-pr-comments": "data/_export_comments.csv"
 ##     },
 ##     {
 ##       "name": "repo2",
@@ -24,7 +24,7 @@
 ##     },
 ##     {
 ##       "name": "3repo",
-##       "csv-pr": "data/export3.csv",
+##       "csv-pr": "data/export_3.csv",
 ##       "csv-pr-comments": "data/export2.comments.csv"
 ##     }
 ##   ],
@@ -91,6 +91,8 @@ async def call_all_data(session, cfg):
         currRepoFull = prj + '/' + currRepo
         currPrCsv = r["csv-pr"]
 
+        print(f"Working with repository {currRepoFull}")
+
         # Deleting old info
         await data_import_main(session, [ARGV0_CHILD, newServerUrl, authInfo, currRepoFull, '-dAll'])
 
@@ -108,19 +110,23 @@ async def call_all_data(session, cfg):
             currRepoFull = prj + '/' + currRepo
             currPrCsv = r["csv-pr"]
 
+            print(f"Working with repository {currRepoFull}")
+
             # Restoring almost all PRs
             newValue = await data_import_main(session, [ARGV0_CHILD, newServerUrl, authInfo, currRepoFull, '-uPRs', oldServerInfo, imgFolder, diffsFile, currPrCsv])
 
             if needToRestore[currRepo] != newValue:
                 needToRunAgain = True
 
-            needToRestore[currRepo] = newServerUrl
+            needToRestore[currRepo] = newValue
 
     print("Force uploading not-referenced PRs")
     for r in cfg["repositories"]:
         currRepo = r["name"]
         currRepoFull = prj + '/' + currRepo
         currPrCsv = r["csv-pr"]
+
+        print(f"Working with repository {currRepoFull}")
 
         # Force restoring all possible PRs
         needToRestore[currRepo] = await data_import_main(session, [ARGV0_CHILD, newServerUrl, authInfo, currRepoFull, '-uPRsForce', oldServerInfo, imgFolder, diffsFile, currPrCsv])
@@ -130,6 +136,8 @@ async def call_all_data(session, cfg):
         currRepo = r["name"]
         currRepoFull = prj + '/' + currRepo
         currPrCommentsCsv = r["csv-pr-comments"]
+
+        print(f"Working with repository {currRepoFull}")
 
         # Restoring all possible PR comments
         needToRestore[currRepo] = await data_import_main(session, [ARGV0_CHILD, newServerUrl, authInfo, currRepoFull, '-uAll', oldServerInfo, imgFolder, diffsFile, currPrCommentsCsv])
