@@ -3,10 +3,14 @@
 #
 # Full restoring sequence should be:
 # 1. Using test repo with the same sources, as in original
-# 2. Restoring all PRs & branches (csv with PRs, $5 should be empty, $6 should be with images path)
-# 3. Restoring all PR comments (csv with PR comments, $5 should be empty, $6 should be with images path, $7 should be with JSON file)
-# 4. Close all PRs (any csv, $5 = '-cPRs')
-# 5. Delete all created branches (any csv, $5 = '-dBranches')
+# 2. Restoring almost all PRs & branches ($4 = '-uAll', $5 should be with old project URL (see the description for more details), $6 should be with images path, $7 should be with JSON file, $8 should be csv with PRs)
+# 3. Done all previous steps for all required repos for next continue
+# 4. Restoring almost all PRs ($4 = '-uPRs', $5 should be with old project URL (see the description for more details), $6 should be with images path, $7 should be with JSON file, $8 should be csv with PRs)
+# 5. Done previous step for all required repos (all repos per single iteration) while any repo script return values or last row number will be changed for next continue
+# 6. Force restoring all lost PRs ($4 = '-uPRsForce', $5 should be with old project URL (see the description for more details), $6 should be with images path, $7 should be with JSON file, $8 should be equal to csv with PRs)
+# 7. Restoring all PR comments ($4 = '-uAll', $5 should be with old project URL (see the description for more details), $6 should be with images path, $7 should be with JSON file, $8 should be equal to csv with PR comments)
+# 8. Close all PRs ($4 = '-cPRs')
+# 9. Delete all created branches ($4 = '-dBranches')
 #
 # If results are correct, you can do that on production repo with the same sources, as in test/original repos. Command subsequence will be the equal, as for testing.
 #
@@ -20,11 +24,10 @@
 # - PRs creation will be always incremented. Automatic branches creation for PR will be not
 #
 # Args sequence:
-## $1 = source file name (csv-formatted data from ruby)
-## $2 = server URL (such as 'https://bitbucket.org/')
-## $3 = server auth info: "username:password"
-## $4 = server project/repo combination (such as 'my-workspace/test-repo')
-## $5 = execution mode:
+## $1 = new server URL (such as 'https://bitbucket.org/')
+## $2 = new server auth info: "username:password"
+## $3 = new server project/repo combination (such as 'my-workspace/test-repo')
+## $4 = execution mode:
 ### -uAll = load info from file to PRs with auto-detection PRs/PR comments
 ### -uAllForce = '-uAll' + force creating cross refs
 ### -debug = print input variables & exit
@@ -34,18 +37,20 @@
 ### -dBranches = delete all created branches (keep PRs)
 ### -cPRs = close (decline) all created PRs
 ### -dPRs = delete all created PRs (keep branches)
-## $6 = (optional, must be set to value or empty, if need to pass next args) source server url/team name. Default value is bitbucket cloud URL without any team name.
+## $5 = (optional, must be set to value or empty, if need to pass next args) source server url/team name. Default value is bitbucket cloud URL without any team name.
 ##    Values
 ##      'https://server.bitbucket.my/with/relative/path/projectName'
 ##      'https://server.bitbucket.my/with/relative/path/projectName/'
 ##    will be decoded as:
 ##      * "https://server.bitbucket.my/with/relative/path/" = old server name
 ##      * "projectName" = project name (!= repo name)
-## $7..$x = (optional) additional args
+## $6..$x = (optional) additional args
 ### any_filename.json = json file will additional info:
 #### - PR comments uses that info in format key:value, where key = diff URL (usually bitbucket API), value = downloaded diff info from that URL
+### any_filename.csv = csv file with additional info:
+#### - PRs & PR comments imports use file as source file name (csv-formatted data from ruby)
 ### any_foldername/ = folder will additional info:
-#### - PRs & PR comments uses files as mirrors for images uploading
+#### - PRs & PR comments use files as mirrors for images uploading
 
 import aiohttp
 import asyncio
@@ -193,11 +198,8 @@ def init():
     MULTITHREAD_LIMIT_BRANCH_DELETE = asyncio.Semaphore(LIMIT_NUMBER_SIMULTANEOUS_REQUESTS_BRANCH_DELETE)
 
 def args_read(argv):
-    global SRC_FILE
-    SRC_FILE = argv[1]
-
     global SERVER
-    SERVER = argv[2]
+    SERVER = argv[1]
     if not SERVER.endswith('/'):
         SERVER += '/'
 
@@ -216,13 +218,13 @@ def args_read(argv):
 
     SERVER_API_VERSION = f"{SERVER_API_VERSION}.0"
 
-    USER_PASS = argv[3]
+    USER_PASS = argv[2]
     userPassSplit = USER_PASS.split(':')
 
     global AUTH
     AUTH = aiohttp.BasicAuth(userPassSplit[0], userPassSplit[1])
 
-    PROJECT_REPO = argv[4]
+    PROJECT_REPO = argv[3]
     prjRepoSplit = PROJECT_REPO.split('/')
 
     global PROJECT
@@ -234,9 +236,9 @@ def args_read(argv):
     global FORCE_CREATE_PRS_WITH_BAD_CROSS_REFS
     FORCE_CREATE_PRS_WITH_BAD_CROSS_REFS = False
 
-    if len(argv) > 5:
+    if len(argv) > 4:
         global CURRENT_MODE
-        mode = argv[5]
+        mode = argv[4]
         if mode == '-dAll':
             CURRENT_MODE = ProcessingMode.DELETE_BRANCHES_PRS
         elif mode == '-uAll':
@@ -266,9 +268,9 @@ def args_read(argv):
     SOURCE_SERVER_ABSOLUTE_URL_PREFIX = "https://bitbucket.org/"
     global OLD_PROJECT_NAME
     OLD_PROJECT_NAME = None
-    if len(argv) > 6:
-        if re.fullmatch(URLS_REGEX, argv[6]):
-            prefix = argv[6]
+    if len(argv) > 5:
+        prefix = argv[5]
+        if re.fullmatch(URLS_REGEX, prefix):
             if not prefix.endswith('/'):
                 prefix += '/'
 
@@ -284,18 +286,21 @@ def args_read(argv):
             SOURCE_SERVER_ABSOLUTE_URL_PREFIX = prefix
             OLD_PROJECT_NAME = oldPrjName
 
-    global JSON_ADDITIONAL_INFO
-    JSON_ADDITIONAL_INFO = {}
+    global JSON_ADDITIONAL_INFO_FILE
+    JSON_ADDITIONAL_INFO_FILE = None
+    global SRC_FILE
+    SRC_FILE = None
     global IMAGES_ADDITIONAL_INFO_PATH
     IMAGES_ADDITIONAL_INFO_PATH = ''
-    for p in argv[7:]:
+    for p in argv[6:]:
         if p.endswith('.json'):
-            with open(p, "r", encoding="utf8") as f:
-                JSON_ADDITIONAL_INFO = json.load(f)
+            JSON_ADDITIONAL_INFO_FILE = p
+        elif p.endswith('.csv'):
+            SRC_FILE = p
         elif p.endswith('/'):
             IMAGES_ADDITIONAL_INFO_PATH = p
 
-def read_file(path):
+def read_csv_file(path):
     rows = []
     with open(path, "r", encoding="utf8") as src:
         inReader = csv.reader(src)
@@ -304,6 +309,18 @@ def read_file(path):
             rows.append(row)
 
     return rows
+
+def read_json_file(path):
+    try:
+        if path:
+            with open(path, "r", encoding="utf8") as f:
+                return json.load(f)
+    except Exception as e:
+        print(f"Cannot read source JSON file '{path}'")
+        print(e)
+        print()
+
+    return {}
 
 def formatTemplate(template, prId=None, commitId=None, repo=None):
     if repo == None:
@@ -1246,8 +1263,8 @@ async def main(argv):
 
 async def main_select_mode(session):
     if CURRENT_MODE == ProcessingMode.DEBUG:
-        print("Src:", SRC_FILE)
-        print("URL:", SERVER)
+        print("Src file:", SRC_FILE)
+        print("Target (new) URL:", SERVER)
         print("API:", SERVER_API_VERSION)
         print("Auth:", AUTH.login, AUTH.password)
         print("Prj:", PROJECT)
@@ -1255,7 +1272,7 @@ async def main_select_mode(session):
         print("Source server:", SOURCE_SERVER_ABSOLUTE_URL_PREFIX)
         print("Old project name:", OLD_PROJECT_NAME)
         print("Images folder:", IMAGES_ADDITIONAL_INFO_PATH)
-        print("JSON data:", JSON_ADDITIONAL_INFO)
+        print("JSON file:", JSON_ADDITIONAL_INFO_FILE)
 
         return
 
@@ -1272,7 +1289,9 @@ async def main_select_mode(session):
     if CURRENT_MODE == ProcessingMode.DELETE_BRANCHES or CURRENT_MODE == ProcessingMode.DELETE_BRANCHES_PRS or CURRENT_MODE == ProcessingMode.DELETE_PRS:
         return
 
-    data = read_file(SRC_FILE)
+    global JSON_ADDITIONAL_INFO
+    JSON_ADDITIONAL_INFO = read_json_file(JSON_ADDITIONAL_INFO_FILE)
+    data = read_csv_file(SRC_FILE)
     if len(data) == 0:
         print("Data was empty")
     elif len(data[0]) == 0:
