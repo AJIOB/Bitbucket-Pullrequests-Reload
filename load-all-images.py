@@ -49,19 +49,19 @@ def deinit():
         global SELENIUM_DRIVER
         SELENIUM_DRIVER.quit()
 
-def parse_args():
-    USER_PASS = sys.argv[1]
+def parse_args(argv):
+    USER_PASS = argv[1]
     userPassSplit = USER_PASS.split(':')
 
     global AUTH
     AUTH = HTTPBasicAuth(userPassSplit[0], userPassSplit[1])
 
     global DST_FILE
-    DST_FILE = sys.argv[2]
+    DST_FILE = argv[2]
 
     global SRC_FILES
     SRC_FILES = []
-    for p in sys.argv[3:]:
+    for p in argv[3:]:
         SRC_FILES.append(p)
 
 def single_query_selenium_get_true_url(url):
@@ -201,10 +201,10 @@ def load_data_from_urls_with_backup(urls):
 
     print("Final dump", resFileName, "was written")
 
-def main():
+def main(argv):
     try:
         init()
-        parse_args()
+        parse_args(argv)
 
         data = load_csv_data()
         urls = select_only_urls(data)
@@ -213,4 +213,4 @@ def main():
         deinit()
 
 if __name__ == '__main__':
-    main()
+    main(sys.argv)
