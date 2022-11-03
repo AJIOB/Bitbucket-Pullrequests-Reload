@@ -2,13 +2,15 @@
 # Created by AJIOB, 2022
 #
 # Full restoring sequence should be:
-# 1. Using test repo with the same sources, as in original
-# 2. Restoring almost all PRs & branches ($4 = '-uAll', $5 should be with old project URL (see the description for more details), $6 should be with images path, $7 should be with JSON file, $8 should be csv with PRs)
-# 3. Done all previous steps for all required repos for next continue
-# 4. Restoring almost all PRs ($4 = '-uPRs', $5 should be with old project URL (see the description for more details), $6 should be with images path, $7 should be with JSON file, $8 should be csv with PRs)
-# 5. Done previous step for all required repos (all repos per single iteration) while any repo script return values or last row number will be changed for next continue
-# 6. Force restoring all lost PRs ($4 = '-uPRsForce', $5 should be with old project URL (see the description for more details), $6 should be with images path, $7 should be with JSON file, $8 should be equal to csv with PRs)
-# 7. Restoring all PR comments ($4 = '-uAll', $5 should be with old project URL (see the description for more details), $6 should be with images path, $7 should be with JSON file, $8 should be equal to csv with PR comments)
+# 0. Using test repo with the same sources, as in original
+# 1. (optional) Removing previous calls PRs, PR comments & branches from repo ($4 = '-dAll')
+# 2. Restoring almost all PRs & branches ($4 = '-uAll', $5 should be with old project URL (see the description for more details), $6 should be with images path, $7 should be with JSON file, $8 should be equal to csv with PRs)
+# 3. Done all previous steps for all required repos for next continue - graceful PR resolving start
+# 4. Restoring almost all PRs ($4 = '-uPRs', other args are equal to previous run)
+# 5. Done previous step for all required repos (all repos per single iteration) while any repo script return values or last row number will be changed for next continue - graceful PR resolving
+# 6. Force restoring all lost PRs ($4 = '-uPRsForce', other args are equal to previous run)
+# 7. Done all previous steps for all required repos for next continue - possible PR comments resolving fix
+# 7. Restoring all PR comments ($4 = '-uAll', $8 should be equal to csv with PR comments, other args are equal to previous run)
 # 8. Close all PRs ($4 = '-cPRs')
 # 9. Delete all created branches ($4 = '-dBranches')
 #
@@ -1265,10 +1267,10 @@ async def main(argv):
 
     if CURRENT_MODE == None:
         print("Current mode was not selected")
-        return
+        return 0
 
     async with aiohttp.ClientSession() as session:
-        await main_select_mode(session)
+        return await main_select_mode(session)
 
 async def main_select_mode(session):
     if CURRENT_MODE == ProcessingMode.DEBUG:
