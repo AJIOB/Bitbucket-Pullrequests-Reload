@@ -76,7 +76,7 @@ DST_BRANCH_PREFIX = 'dst'
 # URL match regex from https://uibakery.io/regex-library/url-regex-python
 URLS_REGEX = r'https?:\/\/(?:www\.)?[-a-zA-Z0-9@:%._\+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b(?:[-a-zA-Z0-9()@:%_\+.~#?&\/=]*)'
 # Used by creation & filtering too, uses '[' for generating more specific output
-PR_START_NAME = "[Bitbucket Import"
+PR_START_NAME = "[Import"
 BRANCH_START_NAME = "bitbucket/"
 # May be set to None for enable default limit 25
 DEFAULT_PAGE_RECORDS_LIMIT = 2000
