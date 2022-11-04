@@ -34,14 +34,24 @@
 #
 # Args:
 ## $1 = json configuration file
+## $2 = (optional) working mode
+### '' (not passed) = execute all sequence
+### '-dAll' = execute only removing
 
 import aiohttp
 import asyncio
 import data_import
+from enum import Enum
 import sys
 
 # First arg to pass child data_import calls
 ARGV0_CHILD = ""
+
+CURRENT_MODE = None
+
+class ProcessingMode(Enum):
+    FULL = 1
+    DELETE_ONLY = 2
 
 def init():
     data_import.init()
@@ -50,7 +60,16 @@ def args_read(argv):
     if len(argv) < 2:
         raise Exception("Configuration file was not passed")
 
-    return data_import.read_json_file(argv[1])
+    res = data_import.read_json_file(argv[1])
+
+    global CURRENT_MODE
+    CURRENT_MODE = ProcessingMode.FULL
+    if len(argv) > 2:
+        mode = argv[2]
+        if mode == '-dAll':
+            CURRENT_MODE = ProcessingMode.DELETE_ONLY
+
+    return res
 
 async def data_import_main(session, argv):
     data_import.args_read(argv)
@@ -81,7 +100,7 @@ async def call_all_data(session, cfg):
         imgFolder += '/'
 
     authInfo = f"{authUsername}:{authPass}"
-    oldServerInfo = f"{oldServerUrl}:{oldServerPrj}"
+    oldServerInfo = f"{oldServerUrl}{oldServerPrj}"
 
     needToRestore = {}
 
@@ -96,8 +115,12 @@ async def call_all_data(session, cfg):
         # Deleting old info
         await data_import_main(session, [ARGV0_CHILD, newServerUrl, authInfo, currRepoFull, '-dAll'])
 
-        # Restoring branches & almost all PRs
-        needToRestore[currRepo] = await data_import_main(session, [ARGV0_CHILD, newServerUrl, authInfo, currRepoFull, '-uAll', oldServerInfo, imgFolder, diffsFile, currPrCsv])
+        if CURRENT_MODE == ProcessingMode.FULL:
+            # Restoring branches & almost all PRs
+            needToRestore[currRepo] = await data_import_main(session, [ARGV0_CHILD, newServerUrl, authInfo, currRepoFull, '-uAll', oldServerInfo, imgFolder, diffsFile, currPrCsv])
+
+    if CURRENT_MODE == ProcessingMode.DELETE_ONLY:
+        return
 
     # Repeat loading if need
     needToRunAgain = sum(needToRestore.values()) > 0
