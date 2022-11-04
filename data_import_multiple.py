@@ -100,7 +100,7 @@ async def call_all_data(session, cfg):
         imgFolder += '/'
 
     authInfo = f"{authUsername}:{authPass}"
-    oldServerInfo = f"{oldServerUrl}:{oldServerPrj}"
+    oldServerInfo = f"{oldServerUrl}{oldServerPrj}"
 
     needToRestore = {}
 
